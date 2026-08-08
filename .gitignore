@@ -1,0 +1,34 @@
+# Dependencies
+**/node_modules/
+
+# Build
+**/dist/
+**/build/
+**/.vite/
+**/.tsbuildinfo
+*.tsbuildinfo
+
+# Env / secrets
+**/.env
+**/.env.*
+!**/.env.example
+
+# Uploads / local data
+**/uploads/
+**/backend/uploads/
+
+# Logs / OS / IDE
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Deploy / temp
+*.tar.gz
+deploy-vps.sh
+
+# Coverage / cache
+coverage/
+.cache/

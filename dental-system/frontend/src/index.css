@@ -1,0 +1,209 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --clinic-deep: 30 58 138;
+  }
+
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply bg-clinic-surface text-clinic-ink font-sans;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 0% 0%, rgba(30, 58, 138, 0.06), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 0%, rgba(249, 115, 22, 0.05), transparent);
+    min-height: 100dvh;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer utilities {
+  @keyframes modal-sheet-up {
+    from {
+      transform: translateY(100%);
+      opacity: 0.85;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  .modal-sheet {
+    animation: modal-sheet-up 0.22s ease-out;
+  }
+
+  @media (min-width: 768px) {
+    .modal-sheet {
+      animation: none;
+    }
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5
+      text-sm font-semibold text-white shadow-sm transition
+      hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-accent/40;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-clinic-soft
+      bg-white px-4 py-2.5 text-sm font-semibold text-clinic-ink transition
+      hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-clinic-deep/20;
+  }
+
+  .panel {
+    @apply rounded-xl border border-slate-200/80 bg-white shadow-panel;
+  }
+
+  .rich-editor-body .ProseMirror {
+    @apply min-h-[inherit] px-3 py-2 text-sm outline-none;
+  }
+
+  .rich-editor-body .ProseMirror p.is-editor-empty:first-child::before {
+    @apply pointer-events-none float-left h-0 text-slate-400;
+    content: attr(data-placeholder);
+  }
+
+  .rich-editor-body .ProseMirror ul {
+    @apply list-disc pl-5;
+  }
+
+  .rich-editor-body .ProseMirror ol {
+    @apply list-decimal pl-5;
+  }
+
+  .rich-editor-body .ProseMirror p {
+    @apply my-1;
+  }
+
+  .rich-editor-body .ProseMirror h2 {
+    @apply my-2 text-base font-semibold text-clinic-ink;
+  }
+
+  .rich-editor-body .ProseMirror img.print-rte-img {
+    @apply my-1 max-h-28 max-w-full cursor-pointer rounded object-contain;
+  }
+
+  .rich-editor-body .ProseMirror img.print-rte-img.ProseMirror-selectednode {
+    outline: 2px solid rgb(5 150 105);
+    outline-offset: 2px;
+  }
+
+  .rich-editor-body .ProseMirror img.print-rte-img[width],
+  .rich-editor-body .ProseMirror img.print-rte-img[style*='width'] {
+    max-height: none;
+    height: auto;
+  }
+
+  .rich-editor-body .ProseMirror img.print-rte-img[data-align='center'] {
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .rich-editor-body .ProseMirror img.print-rte-img[data-align='right'] {
+    display: block;
+    margin-left: auto;
+    margin-right: 0;
+  }
+
+  .rich-editor-body .ProseMirror img.print-rte-img[data-align='left'] {
+    display: inline-block;
+    margin-left: 0;
+    margin-right: auto;
+  }
+
+  .rich-editor-body .ProseMirror .tableWrapper {
+    @apply my-2 overflow-x-auto;
+  }
+
+  .rich-editor-body .ProseMirror table,
+  .rich-editor-body .ProseMirror table.print-rte-table {
+    @apply my-2 w-full border-collapse text-xs;
+    table-layout: fixed;
+  }
+
+  .rich-editor-body .ProseMirror table td,
+  .rich-editor-body .ProseMirror table th,
+  .rich-editor-body .ProseMirror table.print-rte-table td,
+  .rich-editor-body .ProseMirror table.print-rte-table th {
+    @apply relative border border-slate-300 bg-white px-2 py-1.5;
+    min-width: 5rem;
+    min-height: 2.5rem;
+  }
+
+  .rich-editor-body .ProseMirror table td[data-valign='middle'],
+  .rich-editor-body .ProseMirror table th[data-valign='middle'],
+  .rich-editor-body .ProseMirror table td[style*='vertical-align: middle'],
+  .rich-editor-body .ProseMirror table th[style*='vertical-align: middle'] {
+    vertical-align: middle !important;
+  }
+
+  .rich-editor-body .ProseMirror table td[data-valign='bottom'],
+  .rich-editor-body .ProseMirror table th[data-valign='bottom'],
+  .rich-editor-body .ProseMirror table td[style*='vertical-align: bottom'],
+  .rich-editor-body .ProseMirror table th[style*='vertical-align: bottom'] {
+    vertical-align: bottom !important;
+  }
+
+  .rich-editor-body .ProseMirror table td[data-valign='top'],
+  .rich-editor-body .ProseMirror table th[data-valign='top'],
+  .rich-editor-body .ProseMirror table td:not([data-valign]),
+  .rich-editor-body .ProseMirror table th:not([data-valign]) {
+    vertical-align: top;
+  }
+
+  .rich-editor-body .ProseMirror table td p,
+  .rich-editor-body .ProseMirror table th p,
+  .rich-editor-body .ProseMirror table td h2,
+  .rich-editor-body .ProseMirror table th h2 {
+    margin: 0;
+  }
+
+  .rich-editor-body .ProseMirror [style*='text-align: center'],
+  .rich-editor-body .ProseMirror [style*='text-align:center'] {
+    text-align: center;
+  }
+
+  .rich-editor-body .ProseMirror [style*='text-align: right'],
+  .rich-editor-body .ProseMirror [style*='text-align:right'] {
+    text-align: right;
+  }
+
+  .rich-editor-body .ProseMirror .selectedCell::after {
+    background: rgb(30 58 138 / 0.08);
+    content: '';
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    z-index: 2;
+  }
+
+  .rich-editor-body .ProseMirror .column-resize-handle {
+    background-color: rgb(30 58 138 / 0.45);
+    bottom: 0;
+    pointer-events: none;
+    position: absolute;
+    right: -1px;
+    top: 0;
+    width: 3px;
+  }
+
+  .rich-html ul {
+    @apply list-disc pl-5;
+  }
+
+  .rich-html ol {
+    @apply list-decimal pl-5;
+  }
+
+  .rich-html p {
+    @apply my-1;
+  }
+}
