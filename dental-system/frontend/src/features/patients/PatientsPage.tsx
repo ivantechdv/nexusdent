@@ -20,6 +20,8 @@ import {
   whatsappHref,
 } from '@/lib/contact';
 import { useAuthStore } from '@/stores/auth.store';
+import { useFeatureFlag } from '@/lib/features';
+import { PatientsRedesign } from './PatientsRedesign';
 
 const emptyForm: UpsertPatient = {
   documentId: '',
@@ -78,6 +80,12 @@ function EmailLink({ email }: { email: string }) {
 }
 
 export function PatientsPage() {
+  const uiRedesign = useFeatureFlag('uiRedesign');
+  if (uiRedesign) return <PatientsRedesign />;
+  return <PatientsLegacy />;
+}
+
+function PatientsLegacy() {
   const qc = useQueryClient();
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
@@ -116,6 +124,11 @@ export function PatientsPage() {
     });
   }
 
+  function openRegister() {
+    setError('');
+    setOpen(true);
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-3 sm:space-y-5 sm:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
@@ -127,7 +140,7 @@ export function PatientsPage() {
             Registro, búsqueda y ficha clínica
           </p>
         </div>
-        <Button onClick={() => setOpen(true)} className="w-full sm:w-auto">
+        <Button onClick={openRegister} className="w-full sm:w-auto">
           <Plus className="h-4 w-4" />
           Nuevo paciente
         </Button>
@@ -268,7 +281,9 @@ export function PatientsPage() {
               id="doc"
               label="Documento"
               value={form.documentId}
-              onChange={(e) => setForm({ ...form, documentId: e.target.value })}
+              onChange={(e) =>
+                setForm({ ...form, documentId: e.target.value })
+              }
               required
             />
             <Input

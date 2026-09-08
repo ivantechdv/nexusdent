@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { UserPlus } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { Input } from '@/components/Input';
@@ -6,6 +7,7 @@ import { BirthDateInput } from '@/components/BirthDateInput';
 import { WhatsAppPhoneInput } from '@/components/WhatsAppPhoneInput';
 import { Modal } from '@/components/Modal';
 import { normalizePhoneForStorage } from '@/lib/contact';
+import { useFeatureFlag } from '@/lib/features';
 import type { UpsertPatient } from '@/services/patients.api';
 
 interface NewPatientModalProps {
@@ -23,6 +25,8 @@ export function NewPatientModal({
   submitting,
   initialDocument = '',
 }: NewPatientModalProps) {
+  const uiRedesign = useFeatureFlag('uiRedesign');
+  const navigate = useNavigate();
   const [documentId, setDocumentId] = useState('');
   const [fullName, setFullName] = useState('');
   const [birthDate, setBirthDate] = useState('');
@@ -34,6 +38,13 @@ export function NewPatientModal({
 
   useEffect(() => {
     if (!open) return;
+    if (uiRedesign) {
+      const q = new URLSearchParams({ return: '/atencion' });
+      if (initialDocument.trim()) q.set('doc', initialDocument.trim());
+      navigate(`/patients/new?${q.toString()}`, { replace: false });
+      onClose();
+      return;
+    }
     setDocumentId(initialDocument);
     setFullName('');
     setBirthDate('');
@@ -42,7 +53,7 @@ export function NewPatientModal({
     setHasConditions(false);
     setMedicalConditions('');
     setError('');
-  }, [open, initialDocument]);
+  }, [open, initialDocument, uiRedesign, navigate, onClose]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -60,6 +71,8 @@ export function NewPatientModal({
       medicalConditions: hasConditions ? medicalConditions.trim() || null : null,
     });
   }
+
+  if (uiRedesign) return null;
 
   return (
     <Modal

@@ -33,6 +33,7 @@ import {
   ClinicalEvolution,
   ClinicalTimeline,
 } from './ClinicalTimeline';
+import { PatientBudgetsPanel } from './PatientBudgetsPanel';
 import { FinancialBanner, PatientBalance } from './FinancialBanner';
 import type { PaymentMethod } from '@/lib/payment-methods';
 import {
@@ -98,7 +99,11 @@ function buildOpenDebts(evolutions: ClinicalEvolution[]): OpenDebt[] {
 }
 
 export interface PatientFileProps {
-  patient: ActivePatient & { address?: string | null };
+  patient: ActivePatient & {
+    address?: string | null;
+    gender?: string;
+    emergencyPhone?: string | null;
+  };
   balance: PatientBalance;
   odontogramStates: OdontogramStateItem[];
   evolutions: ClinicalEvolution[];
@@ -119,6 +124,8 @@ export interface PatientFileProps {
   onDeleteEvolution?: (id: string) => Promise<void> | void;
   onSearchDocument?: (documentId: string) => void;
   onOpenVisitSession?: () => void;
+  /** Pantalla standalone Evolución SOAP (Figma) */
+  onOpenEvolutionSoap?: () => void;
 }
 
 export function PatientFile({
@@ -376,6 +383,16 @@ export function PatientFile({
       </header>
 
       <Odontogram states={odontogramStates} onChange={onOdontogramChange} />
+
+      <section className="space-y-3">
+        <h2 className="font-display text-lg font-semibold text-slate-900">
+          Presupuestos
+        </h2>
+        <PatientBudgetsPanel
+          patientId={patient.id}
+          patientName={patient.fullName}
+        />
+      </section>
 
       <div className="relative">
         <ClinicalTimeline

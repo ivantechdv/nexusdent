@@ -44,6 +44,7 @@ function toStoreUser(user: AuthUser) {
     clinicSlug: user.clinicSlug ?? null,
     permissions: user.permissions,
     hasCustomPermissions: user.hasCustomPermissions,
+    features: user.features,
   };
 }
 
@@ -68,6 +69,7 @@ export function PlatformPage() {
     adminEmail: '',
     adminPassword: '',
     adminIsDentist: true,
+    copyInviteToSuperAdmin: true,
   });
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [userForm, setUserForm] = useState({
@@ -75,6 +77,7 @@ export function PlatformPage() {
     password: '',
     fullName: '',
     role: 'RECEPTIONIST' as 'ADMIN' | 'DENTIST' | 'RECEPTIONIST',
+    copyInviteToSuperAdmin: true,
   });
 
   const clinicsQ = useQuery({
@@ -97,6 +100,7 @@ export function PlatformPage() {
         adminEmail: clinicForm.adminEmail.trim(),
         adminPassword: clinicForm.adminPassword.trim() || undefined,
         adminIsDentist: clinicForm.adminIsDentist,
+        copyInviteToSuperAdmin: clinicForm.copyInviteToSuperAdmin,
       }),
     onSuccess: (data) => {
       if (data.temporaryPassword) {
@@ -105,7 +109,12 @@ export function PlatformPage() {
           'info',
         );
       } else if (data.inviteEmailSent) {
-        toast('Clínica creada · correo al admin con la clave', 'success');
+        toast(
+          clinicForm.copyInviteToSuperAdmin
+            ? 'Clínica creada · correo al admin y copia a tu email'
+            : 'Clínica creada · correo al admin con la clave',
+          'success',
+        );
       } else if (data.inviteEmailLogged) {
         toast(
           'Clínica creada · clave del admin en consola del backend (sin Resend)',
@@ -122,6 +131,7 @@ export function PlatformPage() {
         adminEmail: '',
         adminPassword: '',
         adminIsDentist: true,
+        copyInviteToSuperAdmin: true,
       });
       setSelectedId(data.id);
       void qc.invalidateQueries({ queryKey: ['platform', 'clinics'] });
@@ -140,8 +150,11 @@ export function PlatformPage() {
   const createUserM = useMutation({
     mutationFn: () =>
       createClinicUserApi(selectedId!, {
-        ...userForm,
+        email: userForm.email.trim(),
+        fullName: userForm.fullName.trim(),
+        role: userForm.role,
         password: userForm.password.trim() || undefined,
+        copyInviteToSuperAdmin: userForm.copyInviteToSuperAdmin,
       }),
     onSuccess: (data) => {
       if (data.temporaryPassword) {
@@ -150,7 +163,12 @@ export function PlatformPage() {
           'info',
         );
       } else if (data.inviteEmailSent) {
-        toast('Cuenta creada · correo enviado con la clave', 'success');
+        toast(
+          userForm.copyInviteToSuperAdmin
+            ? 'Cuenta creada · correo al usuario (BCC a tu email)'
+            : 'Cuenta creada · correo enviado con la clave',
+          'success',
+        );
       } else if (data.inviteEmailLogged) {
         toast(
           'Cuenta creada · clave temporal en consola del backend (Resend no configurado)',
@@ -165,6 +183,7 @@ export function PlatformPage() {
         password: '',
         fullName: '',
         role: 'RECEPTIONIST',
+        copyInviteToSuperAdmin: true,
       });
       void qc.invalidateQueries({
         queryKey: ['platform', 'clinic-users', selectedId],
@@ -440,6 +459,29 @@ export function PlatformPage() {
                 </span>
               </span>
             </label>
+            <label className="mt-2 flex cursor-pointer items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={clinicForm.copyInviteToSuperAdmin}
+                onChange={(e) =>
+                  setClinicForm((f) => ({
+                    ...f,
+                    copyInviteToSuperAdmin: e.target.checked,
+                  }))
+                }
+              />
+              <span>
+                <span className="font-medium text-clinic-ink">
+                  Enviarme copia oculta (BCC) del correo de acceso
+                </span>
+                <span className="mt-0.5 block text-xs text-clinic-slate">
+                  Te llega a tu email de superadmin sin que el admin de la
+                  clínica vea tu dirección. Incluye URL, correo y clave
+                  temporal.
+                </span>
+              </span>
+            </label>
           </div>
 
           <div className="flex gap-2">
@@ -645,7 +687,8 @@ export function PlatformPage() {
                         {optionalTempPasswordHint(userForm.password)}
                       </p>
                     )}
-                    <label className="block text-sm">                      <span className="mb-1 block text-clinic-slate">Rol</span>
+                    <label className="block text-sm">
+                      <span className="mb-1 block text-clinic-slate">Rol</span>
                       <select
                         className="w-full rounded-xl border border-slate-200 px-3 py-2"
                         value={userForm.role}
@@ -662,6 +705,28 @@ export function PlatformPage() {
                           Recepcionista / Asistente
                         </option>
                       </select>
+                    </label>
+                    <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-sm">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={userForm.copyInviteToSuperAdmin}
+                        onChange={(e) =>
+                          setUserForm((f) => ({
+                            ...f,
+                            copyInviteToSuperAdmin: e.target.checked,
+                          }))
+                        }
+                      />
+                      <span>
+                        <span className="font-medium text-clinic-ink">
+                          Enviarme copia oculta (BCC)
+                        </span>
+                        <span className="mt-0.5 block text-xs text-clinic-slate">
+                          Te llega el mismo correo de acceso sin que el usuario
+                          vea tu email.
+                        </span>
+                      </span>
                     </label>
                     <Button type="submit" disabled={createUserM.isPending}>
                       {createUserM.isPending ? 'Creando…' : 'Crear cuenta'}

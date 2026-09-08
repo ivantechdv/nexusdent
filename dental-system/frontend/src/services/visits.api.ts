@@ -7,6 +7,14 @@ export interface VisitProcedureInput {
   quantity?: number;
 }
 
+export interface VisitGalleryAttachment {
+  fileUrl: string;
+  title?: string;
+  originalName?: string | null;
+  mimeType?: string | null;
+  fileSize?: number | null;
+}
+
 export interface CompleteVisitPayload {
   patientId: string;
   appointmentId?: string | null;
@@ -16,8 +24,15 @@ export interface CompleteVisitPayload {
   prescription?: string | null;
   procedures: VisitProcedureInput[];
   toothNumbers?: number[];
+  /** URLs de archivos del expediente (PDF, documentos) */
   attachmentUrls?: string[];
+  /** Fotos clínicas → galería del paciente */
+  galleryAttachments?: VisitGalleryAttachment[];
+  /** Radiografías → sección de radiografías vinculada a la atención */
+  radiographAttachments?: VisitGalleryAttachment[];
   billProcedures?: boolean;
+  /** Presupuesto aceptado que esta atención está ejecutando */
+  quoteId?: string | null;
   /** Enviar resumen por email al paciente (default true). Requiere email en ficha. */
   notifyPatient?: boolean;
   nextAppointment?: {

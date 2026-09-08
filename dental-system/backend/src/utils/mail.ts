@@ -48,11 +48,19 @@ export async function sendMail(opts: {
   subject: string;
   text: string;
   html?: string;
+  /** Copia oculta (BCC) */
+  bcc?: string | string[] | null;
 }): Promise<{ sent: boolean; logged: boolean }> {
   const resend = getClient();
+  const bccList = (Array.isArray(opts.bcc) ? opts.bcc : [opts.bcc])
+    .map((e) => e?.trim().toLowerCase())
+    .filter((e): e is string => Boolean(e) && e !== opts.to.trim().toLowerCase());
+
   if (!resend) {
     console.info(
-      `[mail:dev] RESEND_API_KEY ausente — To: ${opts.to}\nSubject: ${opts.subject}\n\n${opts.text}\n`,
+      `[mail:dev] RESEND_API_KEY ausente — To: ${opts.to}${
+        bccList.length ? ` · BCC: ${bccList.join(', ')}` : ''
+      }\nSubject: ${opts.subject}\n\n${opts.text}\n`,
     );
     return { sent: false, logged: true };
   }
@@ -60,6 +68,7 @@ export async function sendMail(opts: {
   const { error } = await resend.emails.send({
     from: getMailFrom(),
     to: [opts.to],
+    ...(bccList.length ? { bcc: bccList } : {}),
     subject: opts.subject,
     text: opts.text,
     html:
@@ -81,6 +90,8 @@ export async function sendUserInviteEmail(opts: {
   clinicName: string;
   temporaryPassword: string;
   role: string;
+  /** Copia oculta de verificación (p. ej. superadmin) */
+  copyTo?: string | null;
 }) {
   const loginUrl = getLoginUrl();
   const text = [
@@ -121,6 +132,7 @@ export async function sendUserInviteEmail(opts: {
     subject: `Acceso NexusDent · ${opts.clinicName}`,
     text,
     html,
+    bcc: opts.copyTo,
   });
 }
 
@@ -445,6 +457,88 @@ export async function sendPaymentReceiptEmail(opts: {
   return sendMail({
     to: opts.to,
     subject: `Recibo de abono · ${opts.clinicName} · ${receipts}`,
+    text,
+    html,
+  });
+}
+
+export async function sendQuoteEmail(opts: {
+  to: string;
+  patientName: string;
+  clinicName: string;
+  quoteCode: string;
+  title: string;
+  procedures: Array<{
+    name: string;
+    toothNumber?: number | null;
+    quantity: number;
+    lineTotal: number;
+  }>;
+  totalAmount: number;
+  appointmentLabel?: string | null;
+}) {
+  const lines = opts.procedures.map((p) => {
+    const tooth = p.toothNumber != null ? ` · pieza ${p.toothNumber}` : '';
+    return `• ${p.name} ×${p.quantity}${tooth} — USD ${p.lineTotal.toFixed(2)}`;
+  });
+  const text = [
+    `Hola ${opts.patientName},`,
+    '',
+    `Te enviamos el presupuesto ${opts.quoteCode} de ${opts.clinicName}.`,
+    opts.title ? `Concepto: ${opts.title}` : null,
+    '',
+    ...lines,
+    '',
+    `Total estimado: USD ${opts.totalAmount.toFixed(2)}`,
+    '',
+    'Este presupuesto no implica un cobro. Queda pendiente de tu aprobación.',
+    opts.appointmentLabel
+      ? `Cita propuesta: ${opts.appointmentLabel}`
+      : null,
+    '',
+    '— NexusDent',
+  ]
+    .filter((line) => line !== null)
+    .join('\n');
+
+  const rows = opts.procedures
+    .map(
+      (p) => `<tr>
+        <td style="padding:8px;border-bottom:1px solid #e2e8f0;">${escapeHtml(p.name)}</td>
+        <td style="padding:8px;border-bottom:1px solid #e2e8f0;">${p.toothNumber ?? 'General'}</td>
+        <td style="padding:8px;border-bottom:1px solid #e2e8f0;text-align:right;">USD ${p.lineTotal.toFixed(2)}</td>
+      </tr>`,
+    )
+    .join('');
+
+  const html = emailLayout(
+    `Presupuesto ${escapeHtml(opts.quoteCode)}`,
+    `
+      <p>Hola <strong>${escapeHtml(opts.patientName)}</strong>,</p>
+      <p>Te enviamos el presupuesto de <strong>${escapeHtml(opts.clinicName)}</strong>.
+      No genera cobro hasta que lo apruebes y se realice la atención.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;margin:16px 0;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:8px;color:#64748b;font-size:11px;">Procedimiento</th>
+            <th style="text-align:left;padding:8px;color:#64748b;font-size:11px;">Pieza</th>
+            <th style="text-align:right;padding:8px;color:#64748b;font-size:11px;">USD</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p style="font-size:16px;"><strong>Total estimado: USD ${opts.totalAmount.toFixed(2)}</strong></p>
+      ${
+        opts.appointmentLabel
+          ? `<p>Cita propuesta: <strong>${escapeHtml(opts.appointmentLabel)}</strong></p>`
+          : ''
+      }
+    `,
+  );
+
+  return sendMail({
+    to: opts.to,
+    subject: `Presupuesto ${opts.quoteCode} · ${opts.clinicName}`,
     text,
     html,
   });

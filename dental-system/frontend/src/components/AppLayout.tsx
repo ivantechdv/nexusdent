@@ -21,6 +21,7 @@ import clsx from 'clsx';
 import { SUPPORT_WHATSAPP_URL } from '@/config/support';
 import { useAuthStore } from '@/stores/auth.store';
 import { can, NAV_PERMISSIONS, type Permission } from '@/lib/permissions';
+import { useFeatureFlag } from '@/lib/features';
 import { toast } from '@/stores/toast.store';
 import { BcvRatePill } from '@/components/BcvRateCard';
 import { getClinicSettingsApi } from '@/services/clinic-settings.api';
@@ -91,6 +92,7 @@ export function AppLayout() {
   const location = useLocation();
   const qc = useQueryClient();
   const { user, logout } = useAuthStore();
+  const uiRedesign = useFeatureFlag('uiRedesign');
   const role = user?.role;
   const perms = (user?.permissions ?? null) as Permission[] | null;
   const hasClinic = Boolean(user?.clinicId);
@@ -167,7 +169,9 @@ export function AppLayout() {
     return items;
   }, [role, perms, hasClinic]);
 
-  const attentionActive = location.pathname.startsWith('/atencion');
+  const attentionActive =
+    location.pathname.startsWith('/atencion') ||
+    location.pathname.startsWith('/evolucion');
   const logoSrc = authenticatedMediaUrl(clinicQ.data?.logoUrl);
   const clinicTitle =
     clinicQ.data?.name ?? user?.clinicName ?? 'Clínica odontológica';
@@ -180,11 +184,23 @@ export function AppLayout() {
     navigate('/login');
   }
 
-  return (
-    <div className="min-h-[100dvh] bg-clinic-surface md:flex">
-      <aside className="sticky top-0 z-40 hidden h-[100dvh] w-60 shrink-0 flex-col border-r border-slate-200/80 bg-white md:flex">
-        <div className="flex items-center gap-2.5 border-b border-slate-100 px-5 py-5">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-clinic-deep text-sm font-bold text-white">
+  const shell = (
+    <div className="min-h-[100dvh] w-full bg-clinic-surface md:flex">
+      <aside
+        className={clsx(
+          'sticky top-0 z-40 hidden h-[100dvh] w-60 shrink-0 flex-col border-r md:flex',
+          uiRedesign
+            ? 'border-[#0d1e21] bg-[#0d1e21] text-white'
+            : 'border-slate-200/80 bg-white',
+        )}
+      >
+        <div
+          className={clsx(
+            'flex items-center gap-2.5 border-b px-5 py-5',
+            uiRedesign ? 'border-white/10' : 'border-slate-100',
+          )}
+        >
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[#0f766e] text-sm font-bold text-white">
             {logoSrc ? (
               <img
                 src={logoSrc}
@@ -196,10 +212,20 @@ export function AppLayout() {
             )}
           </div>
           <div className="min-w-0">
-            <p className="font-display text-base font-semibold leading-tight text-clinic-ink">
+            <p
+              className={clsx(
+                'font-display text-base font-semibold leading-tight',
+                uiRedesign ? 'text-white' : 'text-clinic-ink',
+              )}
+            >
               NexusDent
             </p>
-            <p className="truncate text-[11px] text-clinic-slate">
+            <p
+              className={clsx(
+                'truncate text-[11px]',
+                uiRedesign ? 'text-slate-400' : 'text-clinic-slate',
+              )}
+            >
               {hasClinic
                 ? clinicTitle
                 : user?.role === 'SUPERADMIN'
@@ -218,14 +244,18 @@ export function AppLayout() {
               className={({ isActive }) =>
                 clsx(
                   'inline-flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition',
-                  isActive
-                    ? 'bg-clinic-deep text-white shadow-sm'
-                    : 'text-clinic-slate hover:bg-slate-100 hover:text-clinic-ink',
+                  uiRedesign
+                    ? isActive
+                      ? 'bg-[#2b7a78] text-white shadow-sm'
+                      : 'text-[#93a5a8] hover:bg-white/10 hover:text-white'
+                    : isActive
+                      ? 'bg-clinic-deep text-white shadow-sm'
+                      : 'text-clinic-slate hover:bg-slate-100 hover:text-clinic-ink',
                 )
               }
             >
               <Icon className="h-4 w-4 shrink-0" />
-              {label}
+              {label === 'Inicio' && uiRedesign ? 'Dashboard' : label}
             </NavLink>
           ))}
 
@@ -236,9 +266,13 @@ export function AppLayout() {
                 onClick={() => setConfigOpen((o) => !o)}
                 className={clsx(
                   'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition',
-                  configActive
-                    ? 'bg-clinic-deep/10 text-clinic-deep'
-                    : 'text-clinic-slate hover:bg-slate-100 hover:text-clinic-ink',
+                  uiRedesign
+                    ? configActive
+                      ? 'bg-white/10 text-white'
+                      : 'text-[#93a5a8] hover:bg-white/10 hover:text-white'
+                    : configActive
+                      ? 'bg-clinic-deep/10 text-clinic-deep'
+                      : 'text-clinic-slate hover:bg-slate-100 hover:text-clinic-ink',
                 )}
               >
                 <Settings className="h-4 w-4 shrink-0" />
@@ -252,7 +286,12 @@ export function AppLayout() {
               </button>
 
               {configOpen && (
-                <div className="ml-3 mt-1 space-y-0.5 border-l border-slate-200 pl-2">
+                <div
+                  className={clsx(
+                    'ml-3 mt-1 space-y-0.5 border-l pl-2',
+                    uiRedesign ? 'border-white/10' : 'border-slate-200',
+                  )}
+                >
                   {configChildren.map((child) =>
                     child.external && child.href ? (
                       <a
@@ -260,9 +299,14 @@ export function AppLayout() {
                         href={child.href}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-clinic-slate transition hover:bg-slate-100 hover:text-clinic-ink"
+                        className={clsx(
+                          'inline-flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition',
+                          uiRedesign
+                            ? 'text-[#93a5a8] hover:bg-white/10 hover:text-white'
+                            : 'text-clinic-slate hover:bg-slate-100 hover:text-clinic-ink',
+                        )}
                       >
-                        <child.icon className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                        <child.icon className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
                         {child.label}
                       </a>
                     ) : (
@@ -272,9 +316,13 @@ export function AppLayout() {
                         className={({ isActive }) =>
                           clsx(
                             'inline-flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition',
-                            isActive
-                              ? 'bg-clinic-deep text-white'
-                              : 'text-clinic-slate hover:bg-slate-100 hover:text-clinic-ink',
+                            uiRedesign
+                              ? isActive
+                                ? 'bg-[#2b7a78] text-white'
+                                : 'text-[#93a5a8] hover:bg-white/10 hover:text-white'
+                              : isActive
+                                ? 'bg-clinic-deep text-white'
+                                : 'text-clinic-slate hover:bg-slate-100 hover:text-clinic-ink',
                           )
                         }
                       >
@@ -289,20 +337,42 @@ export function AppLayout() {
           )}
         </nav>
 
-        <div className="border-t border-slate-100 p-4">
-          {hasClinic && (
+        <div
+          className={clsx(
+            'border-t p-4',
+            uiRedesign ? 'border-white/10' : 'border-slate-100',
+          )}
+        >
+          {hasClinic && !uiRedesign && (
             <div className="mb-3">
               <BcvRatePill className="w-full justify-between" />
             </div>
           )}
-          <p className="truncate text-sm font-medium text-clinic-ink">
+          <p
+            className={clsx(
+              'truncate text-sm font-medium',
+              uiRedesign ? 'text-white' : 'text-clinic-ink',
+            )}
+          >
             {user?.fullName}
           </p>
-          <p className="text-xs text-clinic-slate">{user?.role}</p>
+          <p
+            className={clsx(
+              'text-xs',
+              uiRedesign ? 'text-slate-400' : 'text-clinic-slate',
+            )}
+          >
+            {user?.specialty || user?.role}
+          </p>
           <button
             type="button"
             onClick={handleLogout}
-            className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-clinic-slate hover:bg-slate-50"
+            className={clsx(
+              'mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium',
+              uiRedesign
+                ? 'border-white/15 text-[#93a5a8] hover:bg-white/10 hover:text-white'
+                : 'border-slate-200 text-clinic-slate hover:bg-slate-50',
+            )}
           >
             <LogOut className="h-4 w-4" />
             Salir
@@ -341,7 +411,7 @@ export function AppLayout() {
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-0">
+        <main className="flex min-h-0 flex-1 flex-col pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-0">
           <Outlet />
         </main>
       </div>
@@ -409,6 +479,14 @@ export function AppLayout() {
           </div>
         )}
       </nav>
+    </div>
+  );
+
+  if (!uiRedesign) return shell;
+
+  return (
+    <div className="min-h-[100dvh] bg-slate-200/70">
+      <div className="mx-auto w-full max-w-[2000px]">{shell}</div>
     </div>
   );
 }

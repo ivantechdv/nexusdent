@@ -14,12 +14,26 @@ export type DayPerformance = {
   billedUsd: number;
 };
 
+export type WeekPatientStat = {
+  label: string;
+  count: number;
+};
+
+export type DashboardFinanceKpis = {
+  incomeTodayUsd: number;
+  incomeMonthUsd: number;
+  outstandingUsd: number;
+  collectedUsd: number;
+};
+
 export type DashboardStats = {
   today: string;
   weekFrom: string;
   proceduresToday: ProcStat[];
   proceduresWeek: ProcStat[];
   dailyPerformance: DayPerformance[];
+  finance?: DashboardFinanceKpis;
+  newPatientsWeekly?: WeekPatientStat[];
 };
 
 export async function getDashboardStatsApi(): Promise<DashboardStats> {

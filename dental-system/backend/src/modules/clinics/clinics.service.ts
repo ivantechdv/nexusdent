@@ -316,7 +316,10 @@ export class ClinicsService {
     return { source: 'default', ...seeded };
   }
 
-  async create(dto: CreateClinicDto): Promise<CreateClinicResultDto> {
+  async create(
+    dto: CreateClinicDto,
+    opts?: { actorEmail?: string | null },
+  ): Promise<CreateClinicResultDto> {
     if (!dto.name?.trim()) throw httpError('name es obligatorio', 400);
     const slug = normalizeSlug(dto.slug || dto.name);
     if (!slug) throw httpError('slug inválido', 400);
@@ -351,6 +354,11 @@ export class ClinicsService {
 
     await this.ensureClinicCatalog(id, dto.copyCatalogFromClinicId ?? null);
 
+    const inviteCopyTo =
+      dto.copyInviteToSuperAdmin && opts?.actorEmail
+        ? opts.actorEmail.trim().toLowerCase()
+        : null;
+
     let adminResult: ClinicUserDto & {
       inviteEmailSent?: boolean;
       inviteEmailLogged?: boolean;
@@ -367,6 +375,7 @@ export class ClinicsService {
         specialty:
           dto.adminSpecialty?.trim() ||
           (dto.adminIsDentist !== false ? 'Odontología' : null),
+        inviteCopyTo,
       });
     } catch (err) {
       // Rollback parcial: sin admin la clínica no queda usable
@@ -956,6 +965,7 @@ export class ClinicsService {
           clinicName: clinic.name,
           temporaryPassword: tempPassword,
           role: dto.role,
+          copyTo: dto.inviteCopyTo ?? null,
         });
         inviteEmailSent = mail.sent;
         inviteEmailLogged = mail.logged;

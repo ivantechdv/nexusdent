@@ -174,6 +174,8 @@ export function homePathForRole(
 export const NAV_PERMISSIONS: Record<string, Permission | null> = {
   '/': null,
   '/atencion': 'attention.use',
+  '/presupuesto': 'billing.plans.write',
+  '/evolucion': 'attention.use',
   '/patients': 'patients.read',
   '/appointments': 'appointments.read',
   '/categories': 'catalog.manage',

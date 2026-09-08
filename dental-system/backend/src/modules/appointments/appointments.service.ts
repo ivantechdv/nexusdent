@@ -1,6 +1,7 @@
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { v4 as uuidv4 } from 'uuid';
 import { dbPool } from '../../config';
+import { assertDentistInClinic } from '../../utils/clinic';
 import { httpError } from '../../utils/http';
 import {
   AppointmentDto,
@@ -146,6 +147,7 @@ export class AppointmentsService {
       { id: dto.patientId, clinicId },
     );
     if (!pRows[0]) throw httpError('Paciente no válido en esta clínica', 400);
+    await assertDentistInClinic(clinicId, dto.dentistId);
 
     const durationMin = dto.durationMin ?? 30;
     await this.assertNoOverlap(clinicId, dto.dentistId, dto.scheduledAt, durationMin);
@@ -202,6 +204,9 @@ export class AppointmentsService {
     }
 
     const dentistId = dto.dentistId ?? current.dentistId;
+    if (dto.dentistId) {
+      await assertDentistInClinic(clinicId, dentistId);
+    }
     const scheduledAt = dto.scheduledAt ?? current.scheduledAt;
     const durationMin = dto.durationMin ?? current.durationMin;
     const nextStatus = dto.status ?? current.status;
@@ -318,6 +323,22 @@ export class AppointmentsService {
       scheduledAt: toIso(row.scheduled_at),
       dentistName: row.dentist_name,
     };
+  }
+
+  async assertSlotAvailable(
+    clinicId: string,
+    dentistId: string,
+    scheduledAt: string,
+    durationMin: number,
+    excludeId?: string,
+  ) {
+    await this.assertNoOverlap(
+      clinicId,
+      dentistId,
+      scheduledAt,
+      durationMin,
+      excludeId,
+    );
   }
 
   private async assertNoOverlap(

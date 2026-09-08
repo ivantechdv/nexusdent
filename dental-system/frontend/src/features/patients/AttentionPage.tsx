@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CalendarPlus,
@@ -31,7 +31,9 @@ import {
   isRichTextEmpty,
 } from '@/components/RichTextEditor';
 import { MouthToothPicker } from '@/features/patients/MouthToothPicker';
+import { AttentionRedesign } from '@/features/patients/AttentionRedesign';
 import { NewPatientModal } from '@/features/patients/NewPatientModal';
+import { useFeatureFlag } from '@/lib/features';
 import { listDentistsApi } from '@/services/auth.api';
 import {
   createPatientApi,
@@ -45,13 +47,18 @@ import {
   type Treatment,
 } from '@/services/treatments.api';
 import { listCategoriesApi } from '@/services/categories.api';
-import { uploadFilesApi, type UploadedFile } from '@/services/uploads.api';
+import { uploadFilesApi } from '@/services/uploads.api';
+import {
+  type AttentionFile,
+  type AttentionFileKind,
+  attentionFileKindLabel,
+} from '@/features/patients/attention.types';
 import { getEvolutionApi } from '@/services/clinical.api';
 import {
   completeVisitApi,
   updateVisitApi,
 } from '@/services/visits.api';
-import { registerPaymentApi } from '@/services/billing.api';
+import { registerPaymentApi, getPlanApi, createPlanApi, updatePlanApi } from '@/services/billing.api';
 import { getTodayExchangeRateApi } from '@/services/exchange-rate.api';
 import { listAppointmentsApi } from '@/services/appointments.api';
 import { useAuthStore } from '@/stores/auth.store';
@@ -84,7 +91,7 @@ function notesToEditorHtml(text: string): string {
 function parseStoredVisit(ev: ClinicalEvolution): {
   notes: string;
   teeth: number[];
-  files: UploadedFile[];
+  files: AttentionFile[];
   procedures: SelectedProc[];
 } {
   const raw = ev.clinicalNotes ?? '';
@@ -117,11 +124,12 @@ function parseStoredVisit(ev: ClinicalEvolution): {
   if (ev.attachmentUrl && !urlsFromNotes.includes(ev.attachmentUrl)) {
     urlsFromNotes.unshift(ev.attachmentUrl);
   }
-  const files: UploadedFile[] = urlsFromNotes.map((url) => ({
+  const files: AttentionFile[] = urlsFromNotes.map((url) => ({
     url,
     originalName: url.split('/').pop() || 'archivo',
     mimeType: 'application/octet-stream',
     size: 0,
+    kind: 'ATTACHMENT',
   }));
 
   const cut = plain.search(/\n\s*Procedimientos(\s+realizados)?\s*:/i);
@@ -211,8 +219,12 @@ function suggestTreatmentCode(name: string, category: string) {
 
 export function AttentionPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const quoteMode = location.pathname.startsWith('/presupuesto');
+  const screenPath = quoteMode ? '/presupuesto' : '/atencion';
   const qc = useQueryClient();
   const user = useAuthStore((s) => s.user);
+  const uiRedesign = useFeatureFlag('uiRedesign');
   const { rate: bcvToday } = useExchangeRate();
   const canAddTreatment = can(
     user?.role,
@@ -222,6 +234,7 @@ export function AttentionPage() {
   const [params] = useSearchParams();
   const preselectedId = params.get('patientId') ?? '';
   const evolutionId = params.get('evolutionId') ?? '';
+  const quoteId = params.get('quoteId') ?? '';
   const isEditing = Boolean(evolutionId);
 
   const [patientQuery, setPatientQuery] = useState('');
@@ -230,6 +243,7 @@ export function AttentionPage() {
   const [showPicker, setShowPicker] = useState(false);
   const [newPatientOpen, setNewPatientOpen] = useState(false);
   const [editHydrated, setEditHydrated] = useState('');
+  const [quoteHydrated, setQuoteHydrated] = useState('');
   const [newTreatmentOpen, setNewTreatmentOpen] = useState(false);
   const [newTreatment, setNewTreatment] = useState({
     name: '',
@@ -243,7 +257,7 @@ export function AttentionPage() {
   const [category, setCategory] = useState<string>('ALL');
   const [selected, setSelected] = useState<SelectedProc[]>([]);
   const [teeth, setTeeth] = useState<number[]>([]);
-  const [files, setFiles] = useState<UploadedFile[]>([]);
+  const [files, setFiles] = useState<AttentionFile[]>([]);
   const [uploading, setUploading] = useState(false);
 
   const [prescription, setPrescription] = useState('');
@@ -254,6 +268,7 @@ export function AttentionPage() {
   const [nextTime, setNextTime] = useState('10:00');
   const [nextDentistId, setNextDentistId] = useState('');
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [mailAskOpen, setMailAskOpen] = useState(false);
   const [draftNextDate, setDraftNextDate] = useState(defaultNextDate());
   const [draftNextTime, setDraftNextTime] = useState('10:00');
   const [draftNextDentistId, setDraftNextDentistId] = useState('');
@@ -287,10 +302,40 @@ export function AttentionPage() {
   });
 
   const preselectQ = useQuery({
-    queryKey: ['patient', preselectedId],
+    queryKey: ['patient', 'attention', preselectedId],
     queryFn: () => getPatientApi(preselectedId),
-    enabled: Boolean(preselectedId) && !patient,
+    enabled: Boolean(preselectedId),
   });
+
+  const activePatient = useMemo(() => {
+    if (preselectedId && preselectQ.data?.id === preselectedId) {
+      return preselectQ.data;
+    }
+    if (patient?.id && (!preselectedId || patient.id === preselectedId)) {
+      return patient;
+    }
+    return null;
+  }, [patient, preselectedId, preselectQ.data]);
+
+  const patientLoading =
+    Boolean(preselectedId) &&
+    !activePatient &&
+    preselectQ.isLoading;
+
+  useEffect(() => {
+    if (preselectQ.data?.id === preselectedId) {
+      setPatient(preselectQ.data);
+    }
+  }, [preselectQ.data, preselectedId]);
+
+  useEffect(() => {
+    if (!preselectedId) return;
+    if (quoteMode && quoteId) return;
+    setSelected([]);
+    setTeeth([]);
+    setFiles([]);
+    setError('');
+  }, [preselectedId, quoteMode, quoteId]);
 
   const evolutionQ = useQuery({
     queryKey: ['evolution', evolutionId],
@@ -298,9 +343,33 @@ export function AttentionPage() {
     enabled: Boolean(evolutionId),
   });
 
+  const quoteQ = useQuery({
+    queryKey: ['plan', quoteId],
+    queryFn: () => getPlanApi(quoteId),
+    enabled: Boolean(quoteId) && !isEditing,
+  });
+
   useEffect(() => {
-    if (preselectQ.data) setPatient(preselectQ.data);
-  }, [preselectQ.data]);
+    if (!quoteId || isEditing || !quoteQ.data || quoteHydrated === quoteId) return;
+    const items = quoteQ.data.items ?? [];
+    setSelected(
+      items.map((item) => ({
+        treatmentId: item.treatmentId,
+        quantity: item.quantity || 1,
+      })),
+    );
+    setTeeth(
+      items
+        .map((item) => item.toothNumber)
+        .filter((n): n is number => n != null),
+    );
+    setQuoteHydrated(quoteId);
+    if (quoteMode) {
+      toast('Presupuesto cargado para editar', 'info');
+    } else {
+      toast('Presupuesto aceptado cargado en la atención', 'info');
+    }
+  }, [quoteId, isEditing, quoteQ.data, quoteHydrated]);
 
   useEffect(() => {
     if (!evolutionId) {
@@ -493,7 +562,7 @@ export function AttentionPage() {
       setPatient(p);
       setNewPatientOpen(false);
       setPatientQuery('');
-      navigate(`/atencion?patientId=${p.id}`, { replace: true });
+      navigate(`${screenPath}?patientId=${p.id}`, { replace: true });
       qc.invalidateQueries({ queryKey: ['patients'] });
     },
   });
@@ -563,7 +632,7 @@ export function AttentionPage() {
     setShowPicker(false);
     setPatientQuery('');
     setError('');
-    navigate(`/atencion?patientId=${p.id}`, { replace: true });
+    navigate(`${screenPath}?patientId=${p.id}`, { replace: true });
   }
 
   function resetAfterSave(msg: string, nextAppt?: string | null) {
@@ -593,7 +662,7 @@ export function AttentionPage() {
     if (isEditing && returnPatientId) {
       navigate(`/patients/${returnPatientId}`, { replace: true });
     } else {
-      navigate('/atencion', { replace: true });
+      navigate(screenPath, { replace: true });
     }
     setTimeout(() => setFlash(''), 4000);
   }
@@ -614,39 +683,125 @@ export function AttentionPage() {
     );
   }
 
-  async function onFilesChosen(list: FileList | null) {
+  async function onFilesChosen(
+    list: FileList | null,
+    kind: AttentionFileKind = 'ATTACHMENT',
+  ) {
     if (!list?.length) return;
     setUploading(true);
     setError('');
     try {
       const uploaded = await uploadFilesApi(list);
-      setFiles((prev) => [...prev, ...uploaded]);
-    } catch {
-      setError('No se pudieron subir los archivos');
+      setFiles((prev) => [
+        ...prev,
+        ...uploaded.map((file) => ({ ...file, kind })),
+      ]);
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ??
+        (err as Error)?.message ??
+        'No se pudieron subir los archivos';
+      setError(msg);
+      toast(msg, 'error');
     } finally {
       setUploading(false);
     }
   }
 
-  function requestSave() {
-    setError('');
-    if (!patient) {
+  function validateBeforeSave() {
+    if (!activePatient) {
       const msg = 'Seleccioná o creá un paciente antes de guardar';
       setError(msg);
       toast(msg, 'error');
-      return;
+      return false;
     }
     if (!selected.length) {
-      const msg =
-        'Seleccioná al menos un procedimiento para guardar la atención';
+      const msg = quoteMode
+        ? 'Seleccioná al menos un procedimiento para el presupuesto'
+        : 'Seleccioná al menos un procedimiento para guardar la atención';
       setError(msg);
       toast(msg, 'error');
-      return;
+      return false;
     }
     if (scheduleNext && (!nextDate || !nextTime || !nextDentistId)) {
-      const msg = 'Completá la próxima cita o desmarcá “Agendar continuación”';
+      const msg = quoteMode
+        ? 'Completá la cita o desmarcá “Agendar cita”'
+        : 'Completá la próxima cita o desmarcá “Agendar continuación”';
       setError(msg);
       toast(msg, 'error');
+      return false;
+    }
+    return true;
+  }
+
+  async function saveQuote(sendMail: boolean) {
+    if (!activePatient) return;
+    setSavingAll(true);
+    setMailAskOpen(false);
+    setError('');
+    const names = lineItems.map((l) => l.name).slice(0, 3).join(', ');
+    const items = selected.map((s, index) => ({
+      treatmentId: s.treatmentId,
+      quantity: s.quantity,
+      toothNumber: teeth[index] ?? teeth[0] ?? null,
+    }));
+    const editingQuoteId = quoteMode ? quoteId : '';
+    try {
+      if (editingQuoteId) {
+        await updatePlanApi(editingQuoteId, {
+          title: names || 'Presupuesto',
+          notes: null,
+          notifyPatient: sendMail,
+          items,
+        });
+      } else {
+        await createPlanApi({
+          patientId: activePatient.id,
+          title: names || 'Presupuesto',
+          status: 'DRAFT',
+          notifyPatient: sendMail,
+          notes: null,
+          items,
+          nextAppointment: scheduleNext
+            ? {
+                scheduledAt: `${nextDate}T${nextTime}:00`,
+                dentistId: nextDentistId,
+                durationMin: 30,
+                reason: 'Cita del presupuesto',
+              }
+            : null,
+        });
+      }
+      if (sendMail && activePatient.email) {
+        toast('Presupuesto guardado y enviado al correo del paciente', 'success');
+      } else if (sendMail && !activePatient.email) {
+        toast('Presupuesto guardado. El paciente no tiene correo cargado.', 'info');
+      } else {
+        toast('Presupuesto guardado', 'success');
+      }
+      if (scheduleNext && !editingQuoteId) {
+        toast('Cita agendada con el presupuesto', 'success');
+      }
+      navigate(`/patients/${activePatient.id}`, { replace: true });
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ??
+        (err as Error)?.message ??
+        'No se pudo guardar el presupuesto';
+      setError(msg);
+      toast(msg, 'error');
+    } finally {
+      setSavingAll(false);
+    }
+  }
+
+  function requestSave() {
+    setError('');
+    if (!validateBeforeSave()) return;
+    if (quoteMode) {
+      setMailAskOpen(true);
       return;
     }
 
@@ -661,6 +816,12 @@ export function AttentionPage() {
       return;
     }
     void commitSave({ kind: 'pending' });
+  }
+
+  function clearPatientSelection() {
+    setPatient(null);
+    setShowPicker(true);
+    navigate(screenPath, { replace: true });
   }
 
   async function loadExchangeRate(refresh = false) {
@@ -686,7 +847,7 @@ export function AttentionPage() {
     rateSource?: RateSource;
     splits?: PaymentSplitLine[];
   }) {
-    if (!patient) return;
+    if (!activePatient) return;
     setSavingAll(true);
     setError('');
     setPayOpen(false);
@@ -701,15 +862,34 @@ export function AttentionPage() {
 
     try {
       const result = await visitMut.mutateAsync({
-        patientId: patient.id,
+        patientId: activePatient.id,
         walkIn: false,
         dentistId: user?.role === 'DENTIST' ? user.id : nextDentistId || undefined,
         clinicalNotes,
         prescription: isRichTextEmpty(prescription) ? null : prescription,
         billProcedures: true,
+        quoteId: quoteId || null,
         notifyPatient,
         toothNumbers: teeth,
-        attachmentUrls: files.map((f) => f.url),
+        attachmentUrls: files
+          .filter((f) => f.kind === 'ATTACHMENT')
+          .map((f) => f.url),
+        galleryAttachments: files
+          .filter((f) => f.kind === 'GALLERY')
+          .map((f) => ({
+            fileUrl: f.url,
+            originalName: f.originalName,
+            mimeType: f.mimeType,
+            fileSize: f.size,
+          })),
+        radiographAttachments: files
+          .filter((f) => f.kind === 'RADIOGRAPH')
+          .map((f) => ({
+            fileUrl: f.url,
+            originalName: f.originalName,
+            mimeType: f.mimeType,
+            fileSize: f.size,
+          })),
         procedures: selected.map((s) => ({
           treatmentId: s.treatmentId,
           quantity: s.quantity,
@@ -739,7 +919,7 @@ export function AttentionPage() {
               ? vesToUsd(amountInCurrency, rate)
               : amountInCurrency;
           await registerPaymentApi({
-            patientId: patient.id,
+            patientId: activePatient.id,
             treatmentPlanId: result.planId,
             currencyPaid: currency,
             exchangeRate: rate,
@@ -769,7 +949,7 @@ export function AttentionPage() {
         }
       }
 
-      const pname = patient.fullName ?? 'paciente';
+      const pname = activePatient.fullName ?? 'paciente';
       const msg = isEditing
         ? `Atención de ${pname} actualizada`
         : `Atención de ${pname} guardada`;
@@ -785,15 +965,88 @@ export function AttentionPage() {
     }
   }
 
+  const redesignProps = {
+    patient: activePatient,
+    patientLoading,
+    preselectError:
+      Boolean(preselectedId) && preselectQ.isError && !activePatient,
+    isEditing,
+    patientQuery,
+    debouncedQ,
+    showPicker,
+    patientsLoading: patientsQ.isFetching,
+    patientResults: patientsQ.data ?? [],
+    procSearch,
+    category,
+    categories: categoriesQ.data ?? [],
+    filteredTreatments,
+    selectedMap,
+    lineItems,
+    grandTotal,
+    savingAll,
+    visitPending: visitMut.isPending,
+    canAddTreatment,
+    flash,
+    error,
+    onPatientQueryChange: setPatientQuery,
+    onShowPicker: setShowPicker,
+    onPickPatient: pickPatient,
+    onClearPatient: clearPatientSelection,
+    onNewPatient: () => setNewPatientOpen(true),
+    onProcSearchChange: setProcSearch,
+    onCategoryChange: (code: string) =>
+      setCategory((prev) => (prev === code ? 'ALL' : code)),
+    onToggleProcedure: toggleProcedure,
+    onOpenNewTreatment: openNewTreatment,
+    onSaveAttention: requestSave,
+    quoteMode,
+    files,
+    uploading,
+    onFilesChosen,
+    onRemoveFile: (url: string) =>
+      setFiles((prev) => prev.filter((x) => x.url !== url)),
+    scheduleNext,
+    scheduleLabel: scheduleNext
+      ? `${formatDateLong(nextDate)} · ${formatTimeLabel(nextTime)}`
+      : null,
+    onToggleSchedule: () => {
+      if (scheduleNext) {
+        setScheduleNext(false);
+        return;
+      }
+      setDraftNextDate(nextDate || defaultNextDate());
+      setDraftNextTime(nextTime || '10:00');
+      setDraftNextDentistId(
+        nextDentistId ||
+          (user?.role === 'DENTIST' ? user.id : '') ||
+          dentistsQ.data?.[0]?.id ||
+          '',
+      );
+      setScheduleModalOpen(true);
+    },
+  };
+
   return (
+    <>
+      {uiRedesign ? (
+        <AttentionRedesign key={preselectedId || 'attention'} {...redesignProps} />
+      ) : (
     <div className="mx-auto max-w-6xl space-y-4 p-3 pb-[calc(10.5rem+env(safe-area-inset-bottom))] sm:p-4 sm:pb-[calc(10.5rem+env(safe-area-inset-bottom))] md:px-6 md:pt-6 md:pb-10">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h1 className="font-display text-2xl font-semibold text-clinic-ink">
-            {isEditing ? 'Editar atención' : 'Atención'}
+            {quoteMode && quoteId
+              ? 'Editar presupuesto'
+              : isEditing
+                ? 'Editar atención'
+                : quoteMode
+                  ? 'Presupuesto'
+                  : 'Atención'}
           </h1>
           <p className="text-sm text-clinic-slate">
-            {isEditing
+            {quoteMode
+              ? 'Misma pantalla que la atención. Al guardar te pregunta si querés enviarlo al correo del paciente.'
+              : isEditing
               ? 'Corregí procedimientos, notas o archivos y guardá.'
               : 'Paciente → procedimientos → piezas → guardar.'}
           </p>
@@ -850,7 +1103,7 @@ export function AttentionPage() {
                   onClick={() => {
                     setPatient(null);
                     setShowPicker(true);
-                    navigate('/atencion', { replace: true });
+                    navigate(screenPath, { replace: true });
                   }}
                 >
                   Cambiar
@@ -1233,17 +1486,50 @@ export function AttentionPage() {
             <p className="text-xs font-semibold uppercase tracking-wide text-clinic-slate">
               Archivos del expediente
             </p>
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm hover:bg-slate-100">
-              <FileUp className="h-4 w-4 text-clinic-deep" />
-              {uploading ? 'Subiendo…' : 'Subir radiografías / PDFs / fotos'}
-              <input
-                type="file"
-                className="hidden"
-                multiple
-                accept="image/*,.pdf,.doc,.docx,.txt"
-                onChange={(e) => onFilesChosen(e.target.files)}
-              />
-            </label>
+            <div className="flex flex-wrap gap-2">
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm hover:bg-slate-100">
+                <FileUp className="h-4 w-4 text-clinic-deep" />
+                {uploading ? 'Subiendo…' : 'Foto → Galería'}
+                <input
+                  type="file"
+                  className="hidden"
+                  multiple
+                  accept="image/*,.heic,.heif"
+                  onChange={(e) => {
+                    void onFilesChosen(e.target.files, 'GALLERY');
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-800 hover:bg-violet-100">
+                <FileUp className="h-4 w-4" />
+                {uploading ? 'Subiendo…' : 'Radiografía'}
+                <input
+                  type="file"
+                  className="hidden"
+                  multiple
+                  accept="image/*,.heic,.heif"
+                  onChange={(e) => {
+                    void onFilesChosen(e.target.files, 'RADIOGRAPH');
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm hover:bg-slate-100">
+                <FileUp className="h-4 w-4 text-clinic-deep" />
+                PDF / documento
+                <input
+                  type="file"
+                  className="hidden"
+                  multiple
+                  accept=".pdf,application/pdf,.doc,.docx,.txt"
+                  onChange={(e) => {
+                    void onFilesChosen(e.target.files, 'ATTACHMENT');
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            </div>
             {files.length > 0 && (
               <ul className="space-y-1 text-sm">
                 {files.map((f) => (
@@ -1251,14 +1537,19 @@ export function AttentionPage() {
                     key={f.url}
                     className="flex items-center justify-between gap-2 rounded-md bg-white px-2 py-1"
                   >
-                    <a
-                      href={f.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="truncate text-clinic-deep hover:underline"
-                    >
-                      {f.originalName}
-                    </a>
+                    <div className="min-w-0 flex-1">
+                      <span className="mr-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-500">
+                        {attentionFileKindLabel(f.kind)}
+                      </span>
+                      <a
+                        href={f.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="truncate text-clinic-deep hover:underline"
+                      >
+                        {f.originalName}
+                      </a>
+                    </div>
                     <button
                       type="button"
                       onClick={() =>
@@ -1296,10 +1587,12 @@ export function AttentionPage() {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-semibold text-clinic-ink">
-                  Agendar continuación
+                  Agendar cita
                 </span>
                 <span className="mt-0.5 block text-xs text-clinic-slate">
-                  Elegí fecha en calendario, hora y odontólogo
+                  {quoteMode
+                    ? 'Opcional: cita asociada a este presupuesto'
+                    : 'Elegí fecha en calendario, hora y odontólogo'}
                 </span>
               </span>
             </button>
@@ -1348,6 +1641,7 @@ export function AttentionPage() {
             </div>
           )}
 
+          {!quoteMode && (
           <label
             className={clsx(
               'flex items-start gap-3 rounded-xl border px-3 py-3 transition',
@@ -1375,6 +1669,7 @@ export function AttentionPage() {
               </span>
             </span>
           </label>
+          )}
         </div>
       </section>
 
@@ -1431,10 +1726,14 @@ export function AttentionPage() {
               ? 'Guardando…'
               : isEditing
                 ? 'Guardar cambios'
-                : 'Guardar atención'}
+                : quoteMode
+                  ? 'Guardar presupuesto'
+                  : 'Guardar atención'}
           </Button>
         </div>
       </div>
+    </div>
+      )}
 
       <NewPatientModal
         open={newPatientOpen}
@@ -1556,6 +1855,39 @@ export function AttentionPage() {
           )}
         </div>
       </Modal>
+      <Modal
+        open={mailAskOpen}
+        onClose={() => !savingAll && setMailAskOpen(false)}
+        title="Enviar presupuesto"
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={savingAll}
+              onClick={() => void saveQuote(false)}
+            >
+              Solo guardar
+            </Button>
+            <Button
+              type="button"
+              disabled={savingAll}
+              className="border-0 bg-[#2b7a78] hover:bg-[#236663]"
+              onClick={() => void saveQuote(true)}
+            >
+              {savingAll ? 'Guardando…' : 'Enviar correo'}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-700">
+          ¿Desea enviar este presupuesto al correo del paciente?
+        </p>
+        <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800">
+          {activePatient?.email || 'Este paciente no tiene correo en la ficha.'}
+        </p>
+      </Modal>
+
       <Modal
         open={scheduleModalOpen}
         onClose={() => setScheduleModalOpen(false)}
@@ -1870,6 +2202,6 @@ export function AttentionPage() {
           )}
         </div>
       </Modal>
-    </div>
+    </>
   );
 }

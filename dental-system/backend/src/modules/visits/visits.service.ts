@@ -1,9 +1,10 @@
 import { RowDataPacket } from 'mysql2';
 import { v4 as uuidv4 } from 'uuid';
 import { dbPool } from '../../config';
-import { assertPatientInClinic } from '../../utils/clinic';
+import { assertPatientInClinic, assertDentistInClinic } from '../../utils/clinic';
 import { httpError } from '../../utils/http';
 import { maybeSendVisitSummaryEmail } from '../../utils/patient-notify';
+import { patientGalleryService } from '../patient-gallery/patient-gallery.service';
 import {
   CompleteVisitDto,
   CompleteVisitResult,
@@ -20,6 +21,42 @@ type TreatmentRow = RowDataPacket & {
 
 function lineTotal(qty: number, unitPrice: number) {
   return Math.round(qty * unitPrice * 100) / 100;
+}
+
+async function insertVisitPlanItems(
+  conn: { query: typeof dbPool.query },
+  planId: string,
+  resolved: Array<{
+    treatmentId: number;
+    quantity?: number;
+    unitPrice: number;
+    toothNumber?: number | null;
+  }>,
+  teeth: number[],
+) {
+  const teethQueue = [...teeth];
+  for (const p of resolved) {
+    const qty = Math.max(1, p.quantity ?? 1);
+    const itemTooth = p.toothNumber ?? teethQueue.shift() ?? null;
+    await conn.query(
+      `INSERT INTO treatment_plan_items
+         (id, treatment_plan_id, treatment_id, tooth_number, quantity,
+          unit_price, discount_pct, line_total, status)
+       VALUES
+         (:id, :planId, :treatmentId, :toothNumber, :quantity,
+          :unitPrice, 0, :lineTotal, 'COMPLETED')`,
+      {
+        id: uuidv4(),
+        planId,
+        treatmentId: p.treatmentId,
+        toothNumber: itemTooth,
+        quantity: qty,
+        unitPrice: p.unitPrice,
+        lineTotal: lineTotal(qty, p.unitPrice),
+      },
+    );
+    for (let i = 1; i < qty; i++) teethQueue.shift();
+  }
 }
 
 export class VisitsService {
@@ -44,6 +81,7 @@ export class VisitsService {
       await conn.beginTransaction();
 
       await assertPatientInClinic(clinicId, dto.patientId, conn);
+      await assertDentistInClinic(clinicId, dentistId, conn);
 
       const [recent] = await conn.query<RowDataPacket[]>(
         `SELECT id FROM clinical_records
@@ -160,7 +198,96 @@ export class VisitsService {
       const evoId = uuidv4();
 
       let planId: string | null = null;
-      if (bill) {
+      if (bill && dto.quoteId) {
+        const [quotes] = await conn.query<RowDataPacket[]>(
+          `SELECT id, status, kind, paid_amount
+           FROM treatment_plans
+           WHERE id = :id AND clinic_id = :clinicId AND patient_id = :patientId
+           LIMIT 1`,
+          { id: dto.quoteId, clinicId, patientId: dto.patientId },
+        );
+        const quote = quotes[0];
+        if (
+          quote &&
+          quote.kind === 'QUOTE' &&
+          ['APPROVED', 'IN_PROGRESS'].includes(String(quote.status))
+        ) {
+          await conn.query(
+            `UPDATE treatment_plans
+             SET status = 'IN_PROGRESS',
+                 notes = CASE
+                   WHEN notes LIKE '%Pasó a atención.%' THEN notes
+                   ELSE CONCAT(IFNULL(notes, ''), '\nPasó a atención.')
+                 END,
+                 approved_at = COALESCE(approved_at, NOW())
+             WHERE id = :id AND clinic_id = :clinicId`,
+            { id: quote.id, clinicId },
+          );
+
+          const [existingVisits] = await conn.query<RowDataPacket[]>(
+            `SELECT id, paid_amount
+             FROM treatment_plans
+             WHERE clinic_id = :clinicId
+               AND patient_id = :patientId
+               AND kind = 'VISIT'
+               AND source_quote_id = :quoteId
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            { quoteId: quote.id, clinicId, patientId: dto.patientId },
+          );
+          const existing = existingVisits[0];
+          if (existing && Number(existing.paid_amount) > 0.009) {
+            planId = String(existing.id);
+          } else {
+            planId = existing ? String(existing.id) : uuidv4();
+            const total =
+              Math.round(
+                resolved.reduce(
+                  (sum, p) => sum + lineTotal(p.quantity ?? 1, p.unitPrice),
+                  0,
+                ) * 100,
+              ) / 100;
+            const title = `Atención ${new Date().toISOString().slice(0, 10)} · ${resolved
+              .map((p) => p.name)
+              .slice(0, 3)
+              .join(', ')}`;
+            if (existing) {
+              await conn.query(
+                `UPDATE treatment_plans
+                 SET total_amount = :totalAmount, title = :title, status = 'IN_PROGRESS'
+                 WHERE id = :id AND clinic_id = :clinicId`,
+                { id: planId, clinicId, totalAmount: total, title },
+              );
+              await conn.query(
+                `DELETE FROM treatment_plan_items WHERE treatment_plan_id = :planId`,
+                { planId },
+              );
+            } else {
+              await conn.query(
+                `INSERT INTO treatment_plans
+                   (id, clinic_id, patient_id, created_by, kind, source_quote_id, title,
+                    total_amount, paid_amount, status, notes, approved_at)
+                 VALUES
+                   (:id, :clinicId, :patientId, :createdBy, 'VISIT', :quoteId, :title,
+                    :totalAmount, 0, 'IN_PROGRESS', :notes, NOW())`,
+                {
+                  id: planId,
+                  clinicId,
+                  patientId: dto.patientId,
+                  createdBy: actorId,
+                  quoteId: quote.id,
+                  title,
+                  totalAmount: total,
+                  notes: 'Generado desde presupuesto aceptado',
+                },
+              );
+            }
+            await insertVisitPlanItems(conn, planId, resolved, teeth);
+          }
+        }
+      }
+
+      if (bill && !planId) {
         planId = uuidv4();
         const total = resolved.reduce(
           (sum, p) => sum + lineTotal(p.quantity ?? 1, p.unitPrice),
@@ -169,17 +296,20 @@ export class VisitsService {
 
         await conn.query(
           `INSERT INTO treatment_plans
-             (id, clinic_id, patient_id, created_by, title, total_amount, paid_amount,
+             (id, clinic_id, patient_id, created_by, kind, title, total_amount, paid_amount,
               status, notes, approved_at)
            VALUES
-             (:id, :clinicId, :patientId, :createdBy, :title, :totalAmount, 0,
+             (:id, :clinicId, :patientId, :createdBy, 'VISIT', :title, :totalAmount, 0,
               'IN_PROGRESS', :notes, NOW())`,
           {
             id: planId,
             clinicId,
             patientId: dto.patientId,
             createdBy: actorId,
-            title: `Atención ${new Date().toISOString().slice(0, 10)}`,
+            title: `Atención ${new Date().toISOString().slice(0, 10)} · ${resolved
+              .map((p) => p.name)
+              .slice(0, 3)
+              .join(', ')}`,
             totalAmount: Math.round(total * 100) / 100,
             notes: 'Generado desde atención del día',
           },
@@ -241,6 +371,20 @@ export class VisitsService {
         },
       ];
 
+      const galleryItems = dto.galleryAttachments ?? [];
+      const radiographItems = dto.radiographAttachments ?? [];
+      if (galleryItems.length || radiographItems.length) {
+        await patientGalleryService.bulkCreateFromVisit(
+          clinicId,
+          dto.patientId,
+          evoId,
+          actorId,
+          galleryItems,
+          radiographItems,
+          conn,
+        );
+      }
+
       for (const tooth of teeth) {
         await conn.query(
           `INSERT INTO odontogram_states
@@ -268,6 +412,8 @@ export class VisitsService {
       if (dto.nextAppointment?.scheduledAt) {
         nextAppointmentId = uuidv4();
         const procNames = resolved.map((p) => p.name).join(', ');
+        const nextDentistId = dto.nextAppointment.dentistId || dentistId;
+        await assertDentistInClinic(clinicId, nextDentistId, conn);
         await conn.query(
           `INSERT INTO appointments
              (id, clinic_id, patient_id, dentist_id, scheduled_at, duration_min, status, reason, notes, confirm_token)
@@ -277,7 +423,7 @@ export class VisitsService {
             id: nextAppointmentId,
             clinicId,
             patientId: dto.patientId,
-            dentistId: dto.nextAppointment.dentistId || dentistId,
+            dentistId: nextDentistId,
             scheduledAt: dto.nextAppointment.scheduledAt,
             durationMin: dto.nextAppointment.durationMin ?? 30,
             reason:
@@ -358,6 +504,7 @@ export class VisitsService {
     const conn = await dbPool.getConnection();
     try {
       await conn.beginTransaction();
+      await assertDentistInClinic(clinicId, dentistId, conn);
 
       const [existingRows] = await conn.query<RowDataPacket[]>(
         `SELECT id, patient_id, appointment_id, treatment_plan_id
@@ -472,7 +619,10 @@ export class VisitsService {
               planId,
               clinicId,
               totalAmount: total,
-              title: `Atención ${new Date().toISOString().slice(0, 10)}`,
+              title: `Atención ${new Date().toISOString().slice(0, 10)} · ${resolved
+                .map((p) => p.name)
+                .slice(0, 3)
+                .join(', ')}`,
               notes: 'Actualizado desde atención',
             },
           );
@@ -480,17 +630,20 @@ export class VisitsService {
           planId = uuidv4();
           await conn.query(
             `INSERT INTO treatment_plans
-               (id, clinic_id, patient_id, created_by, title, total_amount, paid_amount,
+               (id, clinic_id, patient_id, created_by, kind, title, total_amount, paid_amount,
                 status, notes, approved_at)
              VALUES
-               (:id, :clinicId, :patientId, :createdBy, :title, :totalAmount, 0,
+               (:id, :clinicId, :patientId, :createdBy, 'VISIT', :title, :totalAmount, 0,
                 'IN_PROGRESS', :notes, NOW())`,
             {
               id: planId,
               clinicId,
               patientId,
               createdBy: actorId,
-              title: `Atención ${new Date().toISOString().slice(0, 10)}`,
+              title: `Atención ${new Date().toISOString().slice(0, 10)} · ${resolved
+                .map((p) => p.name)
+                .slice(0, 3)
+                .join(', ')}`,
               totalAmount: total,
               notes: 'Generado desde atención del día',
             },
@@ -569,6 +722,20 @@ export class VisitsService {
         },
       );
 
+      const galleryItems = dto.galleryAttachments ?? [];
+      const radiographItems = dto.radiographAttachments ?? [];
+      if (galleryItems.length || radiographItems.length) {
+        await patientGalleryService.bulkCreateFromVisit(
+          clinicId,
+          patientId,
+          evolutionId,
+          actorId,
+          galleryItems,
+          radiographItems,
+          conn,
+        );
+      }
+
       for (const tooth of teeth) {
         await conn.query(
           `INSERT INTO odontogram_states
@@ -603,6 +770,7 @@ export class VisitsService {
           `Continuación de: ${procNames}`;
         const dentistForNext =
           dto.nextAppointment.dentistId || dentistId;
+        await assertDentistInClinic(clinicId, dentistForNext, conn);
         const scheduledAt = dto.nextAppointment.scheduledAt;
         const durationMin = dto.nextAppointment.durationMin ?? 30;
 

@@ -39,6 +39,8 @@ import {
   todayYmd,
   ymdFromIso,
 } from '@/features/appointments/calendarUtils';
+import { useFeatureFlag } from '@/lib/features';
+import { DashboardRedesign } from './DashboardRedesign';
 
 const STATUS_LABEL: Record<AppointmentStatus, string> = {
   PENDING: 'Pendiente',
@@ -107,6 +109,12 @@ function moneyTick(v: number) {
 }
 
 export function DashboardPage() {
+  const uiRedesign = useFeatureFlag('uiRedesign');
+  if (uiRedesign) return <DashboardRedesign />;
+  return <DashboardLegacy />;
+}
+
+function DashboardLegacy() {
   const user = useAuthStore((s) => s.user);
   const today = todayYmd();
   const weekTo = addDays(today, 7);

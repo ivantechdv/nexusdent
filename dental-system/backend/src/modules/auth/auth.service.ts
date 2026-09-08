@@ -13,6 +13,10 @@ import {
   type Permission,
 } from '../../middlewares/permissions';
 import { httpError } from '../../utils/http';
+import {
+  featuresForAnyClinicSlug,
+  featuresForClinicSlug,
+} from '../../utils/features';
 import { sendPasswordResetEmail } from '../../utils/mail';
 import {
   AuthUserDto,
@@ -31,12 +35,16 @@ type MembershipPacket = RowDataPacket & {
   is_demo: number;
   role_name: UserRole;
   custom_permissions?: unknown;
+  address?: string | null;
+  whatsapp?: string | null;
+  logo_url?: string | null;
 };
 
 function toUserDto(
   row: UserRow,
   clinic?: { id: string; name: string; slug: string } | null,
   perms?: { permissions?: Permission[]; hasCustomPermissions?: boolean },
+  featuresOverride?: AuthUserDto['features'],
 ): AuthUserDto {
   return {
     id: row.id,
@@ -50,6 +58,7 @@ function toUserDto(
     clinicSlug: clinic?.slug ?? null,
     permissions: perms?.permissions,
     hasCustomPermissions: perms?.hasCustomPermissions,
+    features: featuresOverride ?? featuresForClinicSlug(clinic?.slug),
   };
 }
 
@@ -60,6 +69,9 @@ function mapClinic(row: MembershipPacket): ClinicOptionDto {
     slug: row.clinic_slug,
     isDemo: Boolean(row.is_demo),
     role: row.role_name,
+    address: row.address ?? null,
+    phone: row.whatsapp ?? null,
+    logoUrl: row.logo_url ?? null,
   };
 }
 
@@ -76,7 +88,8 @@ export class AuthService {
     await ensureCustomPermissionsColumn();
     const [rows] = await dbPool.query<MembershipPacket[]>(
       `SELECT cm.clinic_id, c.name AS clinic_name, c.slug AS clinic_slug,
-              c.is_demo, r.name AS role_name, cm.custom_permissions
+              c.is_demo, c.address, c.whatsapp, c.logo_url,
+              r.name AS role_name, cm.custom_permissions
        FROM clinic_memberships cm
        INNER JOIN clinics c ON c.id = cm.clinic_id
        INNER JOIN roles r ON r.id = cm.role_id
@@ -230,7 +243,12 @@ export class AuthService {
 
     return {
       token: signToken(preauth, '15m'),
-      user: toUserDto(user, null),
+      user: toUserDto(
+        user,
+        null,
+        undefined,
+        featuresForAnyClinicSlug(clinics.map((c) => c.slug)),
+      ),
       clinics,
       requiresClinicSelection: true,
       requiresPasswordChange: false,
@@ -290,7 +308,8 @@ export class AuthService {
   private async listAllClinicsAsOptions(): Promise<ClinicOptionDto[]> {
     const [rows] = await dbPool.query<MembershipPacket[]>(
       `SELECT c.id AS clinic_id, c.name AS clinic_name, c.slug AS clinic_slug,
-              c.is_demo, 'SUPERADMIN' AS role_name
+              c.is_demo, c.address, c.whatsapp, c.logo_url,
+              'SUPERADMIN' AS role_name
        FROM clinics c
        WHERE c.is_active = 1
        ORDER BY c.is_demo ASC, c.name ASC`,
@@ -321,7 +340,8 @@ export class AuthService {
     if (user.role_name === 'SUPERADMIN') {
       const [cRows] = await dbPool.query<MembershipPacket[]>(
         `SELECT c.id AS clinic_id, c.name AS clinic_name, c.slug AS clinic_slug,
-                c.is_demo, 'SUPERADMIN' AS role_name
+                c.is_demo, c.address, c.whatsapp, c.logo_url,
+                'SUPERADMIN' AS role_name
          FROM clinics c
          WHERE c.id = :clinicId AND c.is_active = 1
          LIMIT 1`,
@@ -490,7 +510,8 @@ export class AuthService {
       if (clinicId) {
         const [cRows] = await dbPool.query<MembershipPacket[]>(
           `SELECT c.id AS clinic_id, c.name AS clinic_name, c.slug AS clinic_slug,
-                  c.is_demo, 'SUPERADMIN' AS role_name
+                  c.is_demo, c.address, c.whatsapp, c.logo_url,
+                  'SUPERADMIN' AS role_name
            FROM clinics c
            WHERE c.id = :clinicId AND c.is_active = 1
            LIMIT 1`,

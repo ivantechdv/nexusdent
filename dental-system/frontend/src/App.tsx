@@ -4,11 +4,14 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { RequirePermission } from '@/components/RequirePermission';
 import { ToastHost } from '@/components/ToastHost';
 import { LoginPage } from '@/features/auth/LoginPage';
+import { RegisterClinicPage } from '@/features/auth/RegisterClinicPage';
 import { ForgotPasswordPage } from '@/features/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from '@/features/auth/ResetPasswordPage';
 import { AppointmentsPage } from '@/features/appointments/AppointmentsPage';
 import { AttentionPage } from '@/features/patients/AttentionPage';
+import { EvolutionSoapPage } from '@/features/patients/EvolutionSoapPage';
 import { PatientsPage } from '@/features/patients/PatientsPage';
+import { RegisterPatientPage } from '@/features/patients/RegisterPatientPage';
 import { PatientFilePage } from '@/features/patients/PatientFilePage';
 import { TreatmentsPage } from '@/features/treatments/TreatmentsPage';
 import { CategoriesPage } from '@/features/treatments/CategoriesPage';
@@ -27,6 +30,8 @@ export default function App() {
       <ToastHost />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterClinicPage />} />
+        <Route path="/crear-cuenta" element={<RegisterClinicPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route element={<ProtectedRoute />}>
@@ -73,10 +78,34 @@ export default function App() {
               }
             />
             <Route
+              path="/presupuesto"
+              element={
+                <RequirePermission permission="billing.plans.write">
+                  <AttentionPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="/evolucion"
+              element={
+                <RequirePermission permission="attention.use">
+                  <EvolutionSoapPage />
+                </RequirePermission>
+              }
+            />
+            <Route
               path="/patients"
               element={
                 <RequirePermission permission="patients.read">
                   <PatientsPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="/patients/new"
+              element={
+                <RequirePermission permission="patients.write">
+                  <RegisterPatientPage />
                 </RequirePermission>
               }
             />

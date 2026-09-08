@@ -65,8 +65,10 @@ export async function AuthGuard(
     }) as AuthPayload;
 
     if (payload.preauth) {
+      const path = `${req.baseUrl || ''}${req.path || ''}`;
       const allowPreauth =
-        req.path === '/select-clinic' || req.path.endsWith('/select-clinic');
+        path.includes('/select-clinic') ||
+        String(req.originalUrl || '').includes('/select-clinic');
       if (!allowPreauth) {
         res.status(403).json({ message: 'Seleccione una clínica para continuar' });
         return;

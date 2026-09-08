@@ -28,8 +28,20 @@ router.get('/plans/:id', canRead, (req, res, next) =>
   billingController.getPlan(req, res, next),
 );
 
-router.post('/plans', canPlans, (req, res, next) =>
-  billingController.createPlan(req, res, next),
+router.post(
+  '/plans',
+  canPlans,
+  writeLimiter,
+  idempotency('POST /api/billing/plans'),
+  (req, res, next) => billingController.createPlan(req, res, next),
+);
+
+router.put('/plans/:id', canPlans, (req, res, next) =>
+  billingController.updatePlan(req, res, next),
+);
+
+router.post('/plans/:id/duplicate', canPlans, (req, res, next) =>
+  billingController.duplicatePlan(req, res, next),
 );
 
 router.patch(

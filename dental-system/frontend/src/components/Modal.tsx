@@ -9,8 +9,8 @@ interface ModalProps {
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
-  /** sm default · lg para formularios de atención */
-  size?: 'sm' | 'lg';
+  /** sm default · lg formularios · xl registro paciente rediseño */
+  size?: 'sm' | 'lg' | 'xl';
 }
 
 export function Modal({
@@ -50,8 +50,12 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
-        className={`modal-sheet relative z-10 flex w-full max-h-[min(92dvh,100%)] flex-col overflow-hidden rounded-t-2xl border border-b-0 border-slate-200 bg-white shadow-panel md:max-h-[85vh] md:rounded-xl md:border-b ${
-          size === 'lg' ? 'md:max-w-2xl' : 'md:max-w-lg'
+        className={`modal-sheet relative z-10 flex w-full max-h-[min(92dvh,100%)] flex-col overflow-hidden rounded-t-2xl border border-b-0 border-slate-200 bg-white shadow-panel md:max-h-[90vh] md:rounded-xl md:border-b ${
+          size === 'xl'
+            ? 'md:max-w-4xl'
+            : size === 'lg'
+              ? 'md:max-w-2xl'
+              : 'md:max-w-lg'
         }`}
       >
         {/* Handle móvil */}

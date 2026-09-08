@@ -1,7 +1,7 @@
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { v4 as uuidv4 } from 'uuid';
 import { dbPool } from '../../config';
-import { assertPatientInClinic } from '../../utils/clinic';
+import { assertPatientInClinic, assertDentistInClinic } from '../../utils/clinic';
 import { httpError } from '../../utils/http';
 import {
   ClinicalAppointmentSnapshot,
@@ -277,6 +277,19 @@ export class ClinicalRecordsService {
       throw httpError('dentistId es obligatorio', 400);
     }
     await assertPatientInClinic(clinicId, dto.patientId);
+    await assertDentistInClinic(clinicId, dto.dentistId);
+
+    if (dto.appointmentId) {
+      const [appts] = await dbPool.query<RowDataPacket[]>(
+        `SELECT id FROM appointments
+         WHERE id = :id AND clinic_id = :clinicId AND patient_id = :patientId
+         LIMIT 1`,
+        { id: dto.appointmentId, clinicId, patientId: dto.patientId },
+      );
+      if (!appts[0]) {
+        throw httpError('Cita no válida en esta clínica', 400);
+      }
+    }
 
     if (dto.treatmentId != null) {
       const [treatments] = await dbPool.query<RowDataPacket[]>(

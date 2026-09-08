@@ -24,10 +24,12 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+.cursor/mcp.json
 
 # Deploy / temp
 *.tar.gz
 deploy-vps.sh
+**/tmp-figma/
 
 # Coverage / cache
 coverage/

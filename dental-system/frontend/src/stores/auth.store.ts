@@ -15,6 +15,9 @@ export interface AuthUser {
   clinicSlug?: string | null;
   permissions?: string[];
   hasCustomPermissions?: boolean;
+  features?: {
+    uiRedesign: boolean;
+  };
 }
 
 interface AuthState {
