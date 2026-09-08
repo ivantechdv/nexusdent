@@ -1,3 +1,5 @@
+import type { VisitGalleryItemDto } from '../patient-gallery/patient-gallery.types';
+
 export interface VisitProcedureDto {
   treatmentId: number;
   toothNumber?: number | null;
@@ -26,10 +28,16 @@ export interface CompleteVisitDto {
   procedures: VisitProcedureDto[];
   /** Piezas FDI trabajadas en la sesión (odontograma) */
   toothNumbers?: number[];
-  /** URLs de archivos del expediente */
+  /** URLs de archivos del expediente (PDF, documentos) */
   attachmentUrls?: string[];
-  /** Crear/actualizar presupuesto con los procedimientos */
+  /** Fotos clínicas → galería del paciente */
+  galleryAttachments?: VisitGalleryItemDto[];
+  /** Radiografías → sección de radiografías vinculada a la atención */
+  radiographAttachments?: VisitGalleryItemDto[];
+  /** Crear/actualizar cobro de la atención (no es un presupuesto) */
   billProcedures?: boolean;
+  /** Presupuesto aceptado que esta atención está ejecutando */
+  quoteId?: string | null;
   nextAppointment?: VisitNextAppointmentDto | null;
   /** Enviar resumen de la atención al email del paciente (si tiene) */
   notifyPatient?: boolean;

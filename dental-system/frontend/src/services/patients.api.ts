@@ -7,6 +7,11 @@ export type Patient = ActivePatient & {
   email?: string | null;
   address?: string | null;
   emergencyPhone?: string | null;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+  lastVisitAt?: string | null;
+  balanceDue?: number;
+  listStatus?: 'ACTIVE' | 'NEW' | 'INACTIVE';
 };
 
 export type UpsertPatient = {
@@ -29,10 +34,26 @@ export type UpsertPatient = {
   medicalConditions?: string | null;
 };
 
-export async function listPatientsApi(q?: string) {
+export type PatientsSummary = {
+  total: number;
+  newThisMonth: number;
+  withDebt: number;
+  active: number;
+  newThisMonthDeltaPct: number | null;
+};
+
+export async function listPatientsApi(q?: string, limit = 50) {
   const { data } = await api.get<{ data: Patient[] }>('/patients', {
-    params: q ? { q } : undefined,
+    params: {
+      ...(q ? { q } : {}),
+      limit,
+    },
   });
+  return data.data;
+}
+
+export async function getPatientsSummaryApi(): Promise<PatientsSummary> {
+  const { data } = await api.get<{ data: PatientsSummary }>('/patients/summary');
   return data.data;
 }
 

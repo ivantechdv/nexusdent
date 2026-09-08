@@ -28,6 +28,10 @@ export interface AuthUserDto {
   /** Permisos efectivos en la clínica activa */
   permissions?: Permission[];
   hasCustomPermissions?: boolean;
+  /** Flags de producto activos para la clínica (rollout progresivo) */
+  features?: {
+    uiRedesign: boolean;
+  };
 }
 
 export interface ClinicOptionDto {
@@ -36,6 +40,9 @@ export interface ClinicOptionDto {
   slug: string;
   isDemo: boolean;
   role: UserRole;
+  address?: string | null;
+  phone?: string | null;
+  logoUrl?: string | null;
 }
 
 export interface LoginDto {

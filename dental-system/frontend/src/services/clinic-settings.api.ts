@@ -42,10 +42,9 @@ export async function updateClinicSettingsApi(body: UpdateClinicSettings) {
 export async function uploadClinicLogoApi(file: File) {
   const form = new FormData();
   form.append('files', file);
+  // Sin Content-Type manual: el browser agrega multipart + boundary.
   const { data } = await api.post<{
     data: Array<{ url: string; originalName: string }>;
-  }>('/uploads', form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
+  }>('/uploads', form);
   return data.data[0]?.url ?? null;
 }

@@ -35,6 +35,7 @@ export async function createClinicApi(body: {
   adminPassword?: string;
   adminIsDentist?: boolean;
   adminSpecialty?: string;
+  copyInviteToSuperAdmin?: boolean;
 }) {
   const { data } = await api.post<{
     data: ClinicAdmin & {
@@ -89,6 +90,7 @@ export async function createClinicUserApi(
     fullName: string;
     role: 'ADMIN' | 'DENTIST' | 'RECEPTIONIST';
     phone?: string;
+    copyInviteToSuperAdmin?: boolean;
   },
 ) {
   const { data } = await api.post<{

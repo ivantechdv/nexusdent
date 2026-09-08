@@ -1,4 +1,3 @@
-import { formatUsd } from '@/lib/exchange';
 import { authenticatedMediaUrl } from '@/lib/clinicTheme';
 import { hydratePrintHtmlMedia } from '@/lib/printHtml';
 import type { ClinicalEvolution } from '@/features/patients/ClinicalTimeline';
@@ -53,6 +52,15 @@ function dateLabel(iso: string): string {
   }).format(new Date(iso));
 }
 
+/** Montos cortos para que la tabla no se salga del papel. */
+function formatPrintMoney(value: number): string {
+  const n = new Intl.NumberFormat('es-VE', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+  return `$${n}`;
+}
+
 function findState(
   states: OdontogramStateItem[],
   surface: ToothSurface,
@@ -85,7 +93,7 @@ function toothSvg(n: number, allStates: OdontogramStateItem[]): string {
 
   if (missing) {
     return `<td class="odo-cell">
-      <svg viewBox="0 0 28 28" width="22" height="22" aria-hidden="true">
+      <svg viewBox="0 0 28 28" class="odo-svg" aria-hidden="true">
         <circle cx="14" cy="14" r="12" fill="#374151" stroke="#1e3a5f" stroke-width="1.2"/>
         <line x1="7" y1="7" x2="21" y2="21" stroke="#f8fafc" stroke-width="1.5"/>
         <line x1="21" y1="7" x2="7" y2="21" stroke="#f8fafc" stroke-width="1.5"/>
@@ -101,7 +109,7 @@ function toothSvg(n: number, allStates: OdontogramStateItem[]): string {
   const l = fillFor(toothStates, lp);
 
   return `<td class="odo-cell">
-    <svg viewBox="0 0 28 32" width="22" height="25" aria-hidden="true">
+    <svg viewBox="0 0 28 32" class="odo-svg" aria-hidden="true">
       <circle cx="14" cy="13" r="11.5" fill="none" stroke="#1e3a5f" stroke-width="1.15"/>
       <path d="M14 1.5 L22.5 8.2 L14 13 Z" fill="${v}" stroke="#1e3a5f" stroke-width="0.7"/>
       <path d="M2.5 8.2 L14 13 L5.5 18.5 Z" fill="${m}" stroke="#1e3a5f" stroke-width="0.7"/>
@@ -132,7 +140,21 @@ function antecedentesPersonales(patient: MedicalHistoryPatient): string {
   const cond = (patient.medicalConditions ?? '').trim();
   const parts = [...flags];
   if (cond) parts.push(cond);
-  if (notes) parts.push(notes);
+  if (notes && !notes.startsWith('{')) parts.push(notes);
+  if (notes.startsWith('{')) {
+    try {
+      const raw = JSON.parse(notes) as {
+        diseaseNotes?: string;
+        specialAttention?: string;
+        generalNotes?: string;
+      };
+      if (raw.diseaseNotes?.trim()) parts.push(raw.diseaseNotes.trim());
+      if (raw.specialAttention?.trim()) parts.push(raw.specialAttention.trim());
+      if (raw.generalNotes?.trim()) parts.push(raw.generalNotes.trim());
+    } catch {
+      /* ignore */
+    }
+  }
   return parts.join(' · ');
 }
 
@@ -344,13 +366,13 @@ export function printMedicalHistory(opts: {
       if (abono != null) runningSaldo -= abono;
       const saldoCell =
         showPrices && (costo != null || abono != null)
-          ? escapeHtml(formatUsd(Math.max(0, runningSaldo)))
+          ? escapeHtml(formatPrintMoney(Math.max(0, runningSaldo)))
           : '';
       return `<tr>
         <td class="c-fecha">${escapeHtml(dateLabel(ev.signedAt))}</td>
         <td class="c-tx">${escapeHtml(treatmentText(ev))}</td>
-        <td class="c-num">${showPrices && costo != null ? escapeHtml(formatUsd(costo)) : ''}</td>
-        <td class="c-num">${showPrices && abono != null && abono > 0 ? escapeHtml(formatUsd(abono)) : ''}</td>
+        <td class="c-num">${showPrices && costo != null ? escapeHtml(formatPrintMoney(costo)) : ''}</td>
+        <td class="c-num">${showPrices && abono != null && abono > 0 ? escapeHtml(formatPrintMoney(abono)) : ''}</td>
         <td class="c-num">${saldoCell}</td>
         <td class="c-firma"></td>
       </tr>`;
@@ -370,16 +392,27 @@ export function printMedicalHistory(opts: {
 <meta charset="utf-8"/>
 <title>Historia — ${escapeHtml(patient.fullName)}</title>
 <style>
-  @page { size: letter; margin: 10mm 12mm; }
+  @page { size: letter portrait; margin: 12mm 14mm; }
   * { box-sizing: border-box; }
-  body {
+  html, body {
+    width: 100%;
+    max-width: 100%;
     margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+  }
+  body {
     color: #111;
     font-family: Georgia, 'Times New Roman', Times, serif;
     font-size: 11px;
     line-height: 1.35;
   }
-  .sheet { position: relative; }
+  .sheet {
+    position: relative;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+  }
   .wm {
     position: absolute;
     inset: 28% 10% 18% 10%;
@@ -388,9 +421,16 @@ export function printMedicalHistory(opts: {
     pointer-events: none;
     z-index: 0;
   }
-  .content { position: relative; z-index: 1; }
+  .content {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 100%;
+  }
   .hdr, .mh-hdr {
     margin-bottom: 10px;
+    max-width: 100%;
+    overflow: hidden;
   }
   .hdr {
     display: flex;
@@ -399,23 +439,23 @@ export function printMedicalHistory(opts: {
     border-bottom: 2.5px solid #1e3a5f;
     padding-bottom: 8px;
   }
-  .mh-hdr.rich img { max-height: 72px; max-width: 120px; object-fit: contain; display: inline-block; }
+  .mh-hdr.rich img { max-height: 64px; max-width: 72px; object-fit: contain; display: inline-block; }
   .mh-hdr.rich p { margin: 0; }
-  .mh-hdr.rich table { width: 100%; border-collapse: collapse; }
+  .mh-hdr.rich table { width: 100%; max-width: 100%; border-collapse: collapse; table-layout: fixed; }
   .mh-hdr.rich td, .mh-hdr.rich th { vertical-align: middle; padding: 2px 4px; border: none; }
   .mh-hdr.rich td[data-valign='middle'], .mh-hdr.rich th[data-valign='middle'] { vertical-align: middle; }
   .mh-hdr.rich td[data-valign='bottom'], .mh-hdr.rich th[data-valign='bottom'] { vertical-align: bottom; }
   .mh-hdr.rich td[data-valign='top'], .mh-hdr.rich th[data-valign='top'] { vertical-align: top; }
   .hdr img, .hdr > div:first-child {
-    width: 78px;
-    height: 78px;
+    width: 72px;
+    height: 72px;
     object-fit: contain;
     flex-shrink: 0;
   }
   .hdr-title {
     flex: 1;
     text-align: center;
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 700;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -433,9 +473,10 @@ export function printMedicalHistory(opts: {
   }
   .field-row {
     display: flex;
-    gap: 16px;
+    gap: 12px;
     margin: 6px 0;
     align-items: flex-end;
+    max-width: 100%;
   }
   .field {
     display: flex;
@@ -444,8 +485,8 @@ export function printMedicalHistory(opts: {
     flex: 1;
     min-width: 0;
   }
-  .field.sm { flex: 0 0 110px; }
-  .field.md { flex: 0 0 160px; }
+  .field.sm { flex: 0 0 90px; }
+  .field.md { flex: 0 0 140px; }
   .lbl { white-space: nowrap; }
   .line {
     flex: 1;
@@ -454,6 +495,8 @@ export function printMedicalHistory(opts: {
     padding: 0 2px 1px;
     font-family: system-ui, sans-serif;
     font-size: 11px;
+    min-width: 0;
+    overflow: hidden;
   }
   .sec-title {
     text-align: center;
@@ -463,9 +506,10 @@ export function printMedicalHistory(opts: {
     margin: 12px 0 6px;
     text-transform: uppercase;
   }
-  .odo-wrap { margin: 4px 0 10px; }
+  .odo-wrap { margin: 4px 0 10px; max-width: 100%; overflow: hidden; }
   .odo-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  .odo-cell { padding: 1px; text-align: center; vertical-align: bottom; }
+  .odo-cell { padding: 0; text-align: center; vertical-align: bottom; overflow: hidden; }
+  .odo-svg { width: 100%; max-width: 18px; height: auto; display: inline-block; }
   .odo-label {
     text-align: center;
     font-family: system-ui, sans-serif;
@@ -475,26 +519,37 @@ export function printMedicalHistory(opts: {
   }
   table.ledger {
     width: 100%;
+    max-width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
     margin-top: 4px;
     font-family: system-ui, sans-serif;
-    font-size: 10px;
+    font-size: 8.5px;
   }
   table.ledger th, table.ledger td {
     border: 1px solid #1e293b;
-    padding: 4px 5px;
+    padding: 3px 2px;
     vertical-align: top;
+    overflow: hidden;
+    word-break: break-word;
   }
   table.ledger th {
     background: #f8fafc;
-    font-size: 9px;
-    letter-spacing: 0.04em;
+    font-size: 7.5px;
+    letter-spacing: 0.01em;
     text-transform: uppercase;
   }
-  .c-fecha { width: 72px; white-space: nowrap; }
-  .c-tx { width: auto; }
-  .c-num { width: 68px; text-align: right; white-space: nowrap; }
-  .c-firma { width: 70px; height: 22px; }
+  col.c-fecha { width: 13%; }
+  col.c-tx { width: 39%; }
+  col.c-num { width: 11%; }
+  col.c-firma { width: 15%; }
+  .c-fecha { white-space: nowrap; }
+  .c-num {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .c-firma { height: 20px; }
   .clinic-footer {
     margin-top: 8px;
     font-family: system-ui, sans-serif;
@@ -509,6 +564,7 @@ export function printMedicalHistory(opts: {
   }
   @media print {
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .sheet, .content, table.ledger { max-width: 100% !important; }
   }
 </style>
 </head>
@@ -570,10 +626,18 @@ export function printMedicalHistory(opts: {
     </div>
 
     <table class="ledger">
+      <colgroup>
+        <col class="c-fecha" />
+        <col class="c-tx" />
+        <col class="c-num" />
+        <col class="c-num" />
+        <col class="c-num" />
+        <col class="c-firma" />
+      </colgroup>
       <thead>
         <tr>
           <th>Fecha</th>
-          <th>Tratamiento realizado</th>
+          <th>Tratamiento</th>
           <th>Costo</th>
           <th>Abono</th>
           <th>Saldo</th>

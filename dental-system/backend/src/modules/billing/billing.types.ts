@@ -1,4 +1,11 @@
-export type PlanStatus = 'DRAFT' | 'APPROVED' | 'IN_PROGRESS' | 'CLOSED';
+export type PlanKind = 'QUOTE' | 'VISIT';
+export type PlanStatus =
+  | 'DRAFT'
+  | 'APPROVED'
+  | 'IN_PROGRESS'
+  | 'CLOSED'
+  | 'REJECTED'
+  | 'CANCELLED';
 export type PlanItemStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 export type PaymentMethod =
   | 'CASH'
@@ -24,6 +31,9 @@ export interface TreatmentPlanDto {
   id: string;
   patientId: string;
   createdBy: string | null;
+  createdByName?: string | null;
+  quoteCode?: string | null;
+  kind?: PlanKind;
   title: string | null;
   totalAmount: number;
   paidAmount: number;
@@ -53,6 +63,8 @@ export interface PaymentDto {
   id: string;
   patientId: string;
   treatmentPlanId: string;
+  planTitle?: string | null;
+  planTotal?: number | null;
   amountPaid: number;
   currencyPaid: PaymentCurrency;
   amountPaidVes: number | null;
@@ -81,6 +93,21 @@ export interface CreatePlanDto {
   notes?: string | null;
   status?: PlanStatus;
   items: PlanItemInput[];
+  /** Enviar el presupuesto por email al paciente */
+  notifyPatient?: boolean;
+  nextAppointment?: {
+    scheduledAt: string;
+    dentistId?: string;
+    durationMin?: number;
+    reason?: string | null;
+  } | null;
+}
+
+export interface UpdatePlanDto {
+  title?: string;
+  notes?: string | null;
+  items: PlanItemInput[];
+  notifyPatient?: boolean;
 }
 
 export interface CreatePaymentDto {

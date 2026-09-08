@@ -19,10 +19,12 @@ import {
   appointmentWhatsAppMessage,
   whatsappHref,
 } from '@/lib/contact';
+import { useFeatureFlag } from '@/lib/features';
 import {
   AgendaCalendar,
   STATUS_LABEL,
 } from './AgendaCalendar';
+import { AppointmentsRedesign } from './AppointmentsRedesign';
 import {
   type CalendarView,
   rangeForView,
@@ -32,6 +34,12 @@ import {
 } from './calendarUtils';
 
 export function AppointmentsPage() {
+  const uiRedesign = useFeatureFlag('uiRedesign');
+  if (uiRedesign) return <AppointmentsRedesign />;
+  return <AppointmentsLegacy />;
+}
+
+function AppointmentsLegacy() {
   const qc = useQueryClient();
   const clinicName = useAuthStore((s) => s.user?.clinicName);
   const [view, setView] = useState<CalendarView>('week');

@@ -40,6 +40,7 @@ export function ProtectedRoute({ permission }: Props) {
           clinicSlug: me.clinicSlug ?? null,
           permissions: me.permissions,
           hasCustomPermissions: me.hasCustomPermissions,
+          features: me.features,
         });
         setReady(true);
       } catch {

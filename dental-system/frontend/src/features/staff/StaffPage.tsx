@@ -157,6 +157,7 @@ export function StaffPage() {
         clinicSlug: me.clinicSlug ?? null,
         permissions: me.permissions,
         hasCustomPermissions: me.hasCustomPermissions,
+        features: me.features,
       });
     } catch {
       /* ignore */

@@ -13,6 +13,9 @@ export interface AuthUser {
   mustChangePassword?: boolean;
   permissions?: string[];
   hasCustomPermissions?: boolean;
+  features?: {
+    uiRedesign: boolean;
+  };
 }
 
 export interface ClinicOption {
@@ -21,6 +24,9 @@ export interface ClinicOption {
   slug: string;
   isDemo: boolean;
   role: AuthUser['role'];
+  address?: string | null;
+  phone?: string | null;
+  logoUrl?: string | null;
 }
 
 export interface LoginResult {
@@ -44,7 +50,10 @@ export async function selectClinicApi(clinicId: string, token?: string) {
   const { data } = await api.post<{ data: LoginResult }>(
     '/auth/select-clinic',
     { clinicId },
-    token ? { headers: { Authorization: `Bearer ${token}` } } : undefined,
+    {
+      skipAuth: Boolean(token),
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    },
   );
   return data.data;
 }
@@ -62,7 +71,10 @@ export async function changePasswordApi(
   const { data } = await api.post<{ data: LoginResult }>(
     '/auth/change-password',
     { currentPassword, newPassword },
-    token ? { headers: { Authorization: `Bearer ${token}` } } : undefined,
+    {
+      skipAuth: Boolean(token),
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    },
   );
   return data.data;
 }

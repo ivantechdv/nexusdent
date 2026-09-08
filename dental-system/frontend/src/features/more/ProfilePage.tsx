@@ -65,6 +65,9 @@ export function ProfilePage() {
         clinicId: me.clinicId ?? null,
         clinicName: me.clinicName ?? null,
         clinicSlug: me.clinicSlug ?? null,
+        permissions: me.permissions,
+        hasCustomPermissions: me.hasCustomPermissions,
+        features: me.features,
       });
     }
   }, [meQ.data, token, setSession]);
@@ -101,6 +104,9 @@ export function ProfilePage() {
         clinicId: data.user.clinicId,
         clinicName: data.user.clinicName,
         clinicSlug: data.user.clinicSlug,
+        permissions: data.user.permissions,
+        hasCustomPermissions: data.user.hasCustomPermissions,
+        features: data.user.features,
       });
       setForm((f) => ({
         ...f,

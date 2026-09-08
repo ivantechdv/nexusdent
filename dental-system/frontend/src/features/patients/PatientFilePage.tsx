@@ -3,26 +3,29 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Stethoscope } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { PatientFile } from '@/features/patients/PatientFile';
+import { PatientFileRedesign } from '@/features/patients/PatientFileRedesign';
+import { useFeatureFlag } from '@/lib/features';
 import {
   deleteEvolutionApi,
   getOdontogramApi,
   listEvolutionsApi,
   upsertOdontogramApi,
 } from '@/services/clinical.api';
+import type { OdontogramStateItem } from '@/features/clinical-history/odontogram.types';
 import {
   getPatientApi,
   getPatientBalanceApi,
   getPatientByDocumentApi,
 } from '@/services/patients.api';
-import {
-  registerPaymentApi,
-} from '@/services/billing.api';
+import { registerPaymentApi } from '@/services/billing.api';
+import type { PatientFileProps } from '@/features/patients/PatientFile';
 import { toast } from '@/stores/toast.store';
 
 export function PatientFilePage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const uiRedesign = useFeatureFlag('uiRedesign');
 
   const patientQ = useQuery({
     queryKey: ['patient', id],
@@ -59,6 +62,7 @@ export function PatientFilePage() {
       qc.invalidateQueries({ queryKey: ['balance', id] });
       qc.invalidateQueries({ queryKey: ['open-plan', id] });
       qc.invalidateQueries({ queryKey: ['plans', id] });
+      qc.invalidateQueries({ queryKey: ['payments', id] });
       qc.invalidateQueries({ queryKey: ['evolutions', id] });
     },
   });
@@ -99,6 +103,52 @@ export function PatientFilePage() {
     balanceDue: 0,
   };
 
+  const fileProps: PatientFileProps = {
+    patient,
+    balance,
+    odontogramStates: odontogramQ.data ?? [],
+    evolutions: evolutionsQ.data ?? [],
+    onOpenVisitSession: () => navigate(`/atencion?patientId=${id}`),
+    onOpenEvolutionSoap: () => navigate(`/evolucion?patientId=${id}`),
+    onEditEvolution: (evolutionId) =>
+      navigate(`/evolucion?patientId=${id}&evolutionId=${evolutionId}`),
+    onOdontogramChange: (next: OdontogramStateItem) => {
+      odontogramMut.mutate({
+        patientId: id,
+        toothNumber: next.toothNumber,
+        surface: next.surface,
+        condition: next.condition,
+        status: next.status,
+      });
+    },
+    onRegisterPayment: async ({
+      treatmentPlanId,
+      currencyPaid,
+      exchangeRate,
+      rateSource,
+      notes,
+      splits,
+    }) => {
+      await paymentMut.mutateAsync({
+        patientId: id,
+        treatmentPlanId,
+        currencyPaid,
+        exchangeRate,
+        rateSource,
+        notes,
+        splits,
+      });
+      toast('Abono registrado', 'success');
+    },
+    onDeleteEvolution: async (evoId) => {
+      await deleteEvoMut.mutateAsync(evoId);
+    },
+  };
+
+  if (uiRedesign) {
+    return <PatientFileRedesign {...fileProps} />;
+  }
+
   return (
     <div>
       <div className="mx-auto flex max-w-6xl flex-col gap-3 px-3 pt-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-6 sm:pt-4">
@@ -120,14 +170,7 @@ export function PatientFilePage() {
       </div>
 
       <PatientFile
-        patient={patient}
-        balance={balance}
-        odontogramStates={odontogramQ.data ?? []}
-        evolutions={evolutionsQ.data ?? []}
-        onOpenVisitSession={() => navigate(`/atencion?patientId=${id}`)}
-        onEditEvolution={(evolutionId) =>
-          navigate(`/atencion?patientId=${id}&evolutionId=${evolutionId}`)
-        }
+        {...fileProps}
         onSearchDocument={async (documentId) => {
           try {
             const found = await getPatientByDocumentApi(documentId);
@@ -135,37 +178,6 @@ export function PatientFilePage() {
           } catch {
             toast('No se encontró paciente con ese documento', 'error');
           }
-        }}
-        onOdontogramChange={(next) => {
-          odontogramMut.mutate({
-            patientId: id,
-            toothNumber: next.toothNumber,
-            surface: next.surface,
-            condition: next.condition,
-            status: next.status,
-          });
-        }}
-        onRegisterPayment={async ({
-          treatmentPlanId,
-          currencyPaid,
-          exchangeRate,
-          rateSource,
-          notes,
-          splits,
-        }) => {
-          await paymentMut.mutateAsync({
-            patientId: id,
-            treatmentPlanId,
-            currencyPaid,
-            exchangeRate,
-            rateSource,
-            notes,
-            splits,
-          });
-          toast('Abono registrado', 'success');
-        }}
-        onDeleteEvolution={async (evoId) => {
-          await deleteEvoMut.mutateAsync(evoId);
         }}
       />
     </div>

@@ -114,6 +114,7 @@ export class PrintTemplatesService {
   async listBundle(clinicId: string): Promise<PrintBundleDto> {
     await this.ensureDefaults(clinicId);
     await this.ensureMedicalHistoryTemplate(clinicId);
+    await this.dedupePrintTemplates(clinicId);
     const [headers, footers, formats] = await Promise.all([
       this.listHeaders(clinicId, true),
       this.listFooters(clinicId, true),
@@ -490,13 +491,159 @@ export class PrintTemplatesService {
     if (footerId) await this.getFooter(clinicId, footerId);
   }
 
+  /**
+   * Elimina encabezados/pies/formatos duplicados por nombre (misma clínica).
+   * Conserva el más antiguo; remapea referencias de formatos.
+   */
+  async dedupePrintTemplates(clinicId: string): Promise<void> {
+    const [headers] = await dbPool.query<RowDataPacket[]>(
+      `SELECT id, name, body_html, is_default, created_at
+       FROM print_headers
+       WHERE clinic_id = :clinicId
+       ORDER BY created_at ASC`,
+      { clinicId },
+    );
+    const headerGroups = new Map<string, RowDataPacket[]>();
+    for (const row of headers) {
+      const key = String(row.name ?? '')
+        .trim()
+        .toLowerCase();
+      if (!key) continue;
+      const list = headerGroups.get(key) ?? [];
+      list.push(row);
+      headerGroups.set(key, list);
+    }
+    for (const group of headerGroups.values()) {
+      if (group.length < 2) continue;
+      const keep =
+        group.find((r) => Number(r.is_default) === 1) ??
+        group.find((r) =>
+          String(r.body_html ?? '').includes('{{LOGO}}'),
+        ) ??
+        group[0];
+      for (const dup of group) {
+        if (dup.id === keep.id) continue;
+        await dbPool.query(
+          `UPDATE print_formats
+           SET header_id = :keepId
+           WHERE clinic_id = :clinicId AND header_id = :dupId`,
+          { clinicId, keepId: keep.id, dupId: dup.id },
+        );
+        await dbPool.query(
+          `DELETE FROM print_headers WHERE id = :id AND clinic_id = :clinicId`,
+          { id: dup.id, clinicId },
+        );
+      }
+    }
+
+    const [footers] = await dbPool.query<RowDataPacket[]>(
+      `SELECT id, name, is_default, created_at
+       FROM print_footers
+       WHERE clinic_id = :clinicId
+       ORDER BY created_at ASC`,
+      { clinicId },
+    );
+    const footerGroups = new Map<string, RowDataPacket[]>();
+    for (const row of footers) {
+      const key = String(row.name ?? '')
+        .trim()
+        .toLowerCase();
+      if (!key) continue;
+      const list = footerGroups.get(key) ?? [];
+      list.push(row);
+      footerGroups.set(key, list);
+    }
+    for (const group of footerGroups.values()) {
+      if (group.length < 2) continue;
+      const keep = group.find((r) => Number(r.is_default) === 1) ?? group[0];
+      for (const dup of group) {
+        if (dup.id === keep.id) continue;
+        await dbPool.query(
+          `UPDATE print_formats
+           SET footer_id = :keepId
+           WHERE clinic_id = :clinicId AND footer_id = :dupId`,
+          { clinicId, keepId: keep.id, dupId: dup.id },
+        );
+        await dbPool.query(
+          `DELETE FROM print_footers WHERE id = :id AND clinic_id = :clinicId`,
+          { id: dup.id, clinicId },
+        );
+      }
+    }
+
+    const [formats] = await dbPool.query<RowDataPacket[]>(
+      `SELECT id, name, doc_type, is_default, created_at
+       FROM print_formats
+       WHERE clinic_id = :clinicId
+       ORDER BY created_at ASC`,
+      { clinicId },
+    );
+    const formatGroups = new Map<string, RowDataPacket[]>();
+    for (const row of formats) {
+      const key = `${String(row.doc_type ?? '')}|${String(row.name ?? '')
+        .trim()
+        .toLowerCase()}`;
+      const list = formatGroups.get(key) ?? [];
+      list.push(row);
+      formatGroups.set(key, list);
+    }
+    for (const group of formatGroups.values()) {
+      if (group.length < 2) continue;
+      const keep = group.find((r) => Number(r.is_default) === 1) ?? group[0];
+      for (const dup of group) {
+        if (dup.id === keep.id) continue;
+        await dbPool.query(
+          `DELETE FROM print_formats WHERE id = :id AND clinic_id = :clinicId`,
+          { id: dup.id, clinicId },
+        );
+      }
+    }
+
+    // Un solo predeterminado por tipo (si quedaron varios)
+    await dbPool.query(
+      `UPDATE print_headers
+       SET is_default = 0
+       WHERE clinic_id = :clinicId
+         AND is_default = 1
+         AND id NOT IN (
+           SELECT keep_id FROM (
+             SELECT MIN(id) AS keep_id
+             FROM print_headers
+             WHERE clinic_id = :clinicId AND is_default = 1
+           ) t
+         )`,
+      { clinicId },
+    );
+    await dbPool.query(
+      `UPDATE print_footers
+       SET is_default = 0
+       WHERE clinic_id = :clinicId
+         AND is_default = 1
+         AND id NOT IN (
+           SELECT keep_id FROM (
+             SELECT MIN(id) AS keep_id
+             FROM print_footers
+             WHERE clinic_id = :clinicId AND is_default = 1
+           ) t
+         )`,
+      { clinicId },
+    );
+  }
+
   /** Crea plantillas iniciales si la clínica aún no tiene. */
   async ensureDefaults(clinicId: string): Promise<void> {
     const [countRows] = await dbPool.query<RowDataPacket[]>(
-      `SELECT COUNT(*) AS c FROM print_formats WHERE clinic_id = :clinicId`,
+      `SELECT
+         (SELECT COUNT(*) FROM print_formats WHERE clinic_id = :clinicId) AS formats,
+         (SELECT COUNT(*) FROM print_headers WHERE clinic_id = :clinicId) AS headers`,
       { clinicId },
     );
-    if (Number(countRows[0]?.c ?? 0) > 0) return;
+    const formats = Number(countRows[0]?.formats ?? 0);
+    const headers = Number(countRows[0]?.headers ?? 0);
+    if (formats > 0 || headers > 0) {
+      await this.ensureMedicalHistoryTemplate(clinicId);
+      return;
+    }
 
     const headerId = uuidv4();
     const footerId = uuidv4();
@@ -565,7 +712,9 @@ export class PrintTemplatesService {
   async ensureMedicalHistoryTemplate(clinicId: string): Promise<void> {
     const [hdrRows] = await dbPool.query<RowDataPacket[]>(
       `SELECT id FROM print_headers
-       WHERE clinic_id = :clinicId AND name = :name
+       WHERE clinic_id = :clinicId
+         AND LOWER(TRIM(name)) = LOWER(:name)
+       ORDER BY created_at ASC
        LIMIT 1`,
       { clinicId, name: MEDICAL_HISTORY_HEADER_NAME },
     );
@@ -592,7 +741,8 @@ export class PrintTemplatesService {
 
     const [fmtRows] = await dbPool.query<RowDataPacket[]>(
       `SELECT id FROM print_formats
-       WHERE clinic_id = :clinicId AND name = :name
+       WHERE clinic_id = :clinicId
+         AND LOWER(TRIM(name)) = LOWER(:name)
        LIMIT 1`,
       { clinicId, name: MEDICAL_HISTORY_FORMAT_NAME },
     );

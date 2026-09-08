@@ -7,6 +7,7 @@ import {
   CreatePaymentDto,
   CreatePlanDto,
   PlanStatus,
+  UpdatePlanDto,
 } from './billing.types';
 
 export class BillingController {
@@ -18,7 +19,12 @@ export class BillingController {
         res.status(400).json({ message: 'patientId es requerido' });
         return;
       }
-      const data = await billingService.listPlansByPatient(clinicId, patientId);
+      const kind = String(req.query.kind ?? '').toUpperCase();
+      const data = await billingService.listPlansByPatient(
+        clinicId,
+        patientId,
+        kind === 'QUOTE' || kind === 'VISIT' ? kind : undefined,
+      );
       res.json({ data });
     } catch (err) {
       if (!sendError(res, err)) next(err);
@@ -41,6 +47,34 @@ export class BillingController {
       const data = await billingService.createPlan(
         clinicId,
         req.body as CreatePlanDto,
+        req.user?.sub,
+      );
+      res.status(201).json({ data });
+    } catch (err) {
+      if (!sendError(res, err)) next(err);
+    }
+  }
+
+  async updatePlan(req: Request, res: Response, next: NextFunction) {
+    try {
+      const clinicId = requireClinicId(req);
+      const data = await billingService.updatePlan(
+        clinicId,
+        req.params.id,
+        req.body as UpdatePlanDto,
+      );
+      res.json({ data });
+    } catch (err) {
+      if (!sendError(res, err)) next(err);
+    }
+  }
+
+  async duplicatePlan(req: Request, res: Response, next: NextFunction) {
+    try {
+      const clinicId = requireClinicId(req);
+      const data = await billingService.duplicatePlan(
+        clinicId,
+        req.params.id,
         req.user?.sub,
       );
       res.status(201).json({ data });

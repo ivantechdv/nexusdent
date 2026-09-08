@@ -42,8 +42,19 @@ export interface PatientDto {
   isPregnant: boolean;
   anamnesisNotes: string | null;
   medicalConditions: string | null;
-  createdAt?: Date;
-  updatedAt?: Date;
+  createdAt?: Date | string;
+  updatedAt?: Date | string;
+  lastVisitAt?: string | null;
+  balanceDue?: number;
+  listStatus?: 'ACTIVE' | 'NEW' | 'INACTIVE';
+}
+
+export interface PatientsSummaryDto {
+  total: number;
+  newThisMonth: number;
+  withDebt: number;
+  active: number;
+  newThisMonthDeltaPct: number | null;
 }
 
 export interface UpsertPatientDto {

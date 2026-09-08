@@ -22,17 +22,29 @@ export interface TreatmentPlan {
   id: string;
   patientId: string;
   title: string | null;
+  quoteCode?: string | null;
+  kind?: 'QUOTE' | 'VISIT';
+  createdByName?: string | null;
   totalAmount: number;
   paidAmount: number;
-  status: 'DRAFT' | 'APPROVED' | 'IN_PROGRESS' | 'CLOSED';
+  status:
+    | 'DRAFT'
+    | 'APPROVED'
+    | 'IN_PROGRESS'
+    | 'CLOSED'
+    | 'REJECTED'
+    | 'CANCELLED';
   notes: string | null;
   items?: TreatmentPlanItem[];
+  createdAt?: string;
 }
 
 export interface Payment {
   id: string;
   patientId: string;
   treatmentPlanId: string;
+  planTitle?: string | null;
+  planTotal?: number | null;
   amountPaid: number;
   currencyPaid?: 'USD' | 'VES';
   amountPaidVes?: number | null;
@@ -45,10 +57,25 @@ export interface Payment {
   paidAt: string;
 }
 
-export async function listPlansApi(patientId: string) {
-  const { data } = await api.get<{ data: TreatmentPlan[] }>('/billing/plans', {
+export async function listPaymentsApi(patientId: string) {
+  const { data } = await api.get<{ data: Payment[] }>('/billing/payments', {
     params: { patientId },
   });
+  return data.data ?? [];
+}
+
+export async function listPlansApi(
+  patientId: string,
+  kind?: 'QUOTE' | 'VISIT',
+) {
+  const { data } = await api.get<{ data: TreatmentPlan[] }>('/billing/plans', {
+    params: { patientId, kind },
+  });
+  return data.data;
+}
+
+export async function getPlanApi(id: string) {
+  const { data } = await api.get<{ data: TreatmentPlan }>(`/billing/plans/${id}`);
   return data.data;
 }
 
@@ -64,6 +91,13 @@ export async function createPlanApi(payload: {
   title?: string;
   notes?: string | null;
   status?: TreatmentPlan['status'];
+  notifyPatient?: boolean;
+  nextAppointment?: {
+    scheduledAt: string;
+    dentistId?: string;
+    durationMin?: number;
+    reason?: string | null;
+  } | null;
   items: Array<{
     treatmentId: number;
     toothNumber?: number | null;
@@ -72,7 +106,9 @@ export async function createPlanApi(payload: {
     discountPct?: number;
   }>;
 }) {
-  const { data } = await api.post<{ data: TreatmentPlan }>('/billing/plans', payload);
+  const { data } = await api.post<{ data: TreatmentPlan }>('/billing/plans', payload, {
+    headers: { 'Idempotency-Key': newIdempotencyKey() },
+  });
   return data.data;
 }
 
@@ -83,6 +119,35 @@ export async function updatePlanStatusApi(
   const { data } = await api.patch<{ data: TreatmentPlan }>(
     `/billing/plans/${id}/status`,
     { status },
+  );
+  return data.data;
+}
+
+export async function updatePlanApi(
+  id: string,
+  payload: {
+    title?: string;
+    notes?: string | null;
+    notifyPatient?: boolean;
+    items: Array<{
+      treatmentId: number;
+      toothNumber?: number | null;
+      quantity?: number;
+      unitPrice?: number;
+      discountPct?: number;
+    }>;
+  },
+) {
+  const { data } = await api.put<{ data: TreatmentPlan }>(
+    `/billing/plans/${id}`,
+    payload,
+  );
+  return data.data;
+}
+
+export async function duplicatePlanApi(id: string) {
+  const { data } = await api.post<{ data: TreatmentPlan }>(
+    `/billing/plans/${id}/duplicate`,
   );
   return data.data;
 }

@@ -41,6 +41,8 @@ export interface CreateClinicDto {
   adminPhone?: string | null;
   /** Si true, el ADMIN también aparece como odontólogo en agenda/atención */
   adminIsDentist?: boolean;
+  /** Si true, también envía copia del correo de invitación al superadmin */
+  copyInviteToSuperAdmin?: boolean;
   adminSpecialty?: string | null;
 }
 
@@ -82,6 +84,10 @@ export interface CreateClinicUserDto {
   /** Solo aplica si role=ADMIN: también atiende como odontólogo */
   isDentist?: boolean;
   specialty?: string | null;
+  /** Si true, BCC al email del actor (superadmin) */
+  copyInviteToSuperAdmin?: boolean;
+  /** Copia del mail de invitación (email del superadmin) — uso interno */
+  inviteCopyTo?: string | null;
   /** Si se envía, guarda override de permisos */
   customPermissions?: string[] | null;
 }

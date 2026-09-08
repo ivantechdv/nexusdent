@@ -17,6 +17,16 @@ export class PatientsController {
     }
   }
 
+  async summary(req: Request, res: Response, next: NextFunction) {
+    try {
+      const clinicId = requireClinicId(req);
+      const data = await patientsService.summary(clinicId);
+      res.json({ data });
+    } catch (err) {
+      if (!sendError(res, err)) next(err);
+    }
+  }
+
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
       const clinicId = requireClinicId(req);

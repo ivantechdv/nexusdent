@@ -1,9 +1,11 @@
 import { RowDataPacket } from 'mysql2';
 import { v4 as uuidv4 } from 'uuid';
 import { dbPool } from '../../config';
-import { assertPatientInClinic } from '../../utils/clinic';
+import { assertPatientInClinic, assertDentistInClinic } from '../../utils/clinic';
 import { httpError } from '../../utils/http';
 import { maybeSendPaymentReceiptEmail } from '../../utils/patient-notify';
+import { sendQuoteEmail } from '../../utils/mail';
+import { appointmentsService } from '../appointments/appointments.service';
 import {
   CreatePaymentBatchDto,
   CreatePaymentDto,
@@ -18,12 +20,16 @@ import {
   RateSource,
   TreatmentPlanDto,
   TreatmentPlanItemDto,
+  UpdatePlanDto,
 } from './billing.types';
 
 type PlanRow = RowDataPacket & {
   id: string;
   patient_id: string;
   created_by: string | null;
+  created_by_name?: string | null;
+  quote_code?: string | null;
+  kind?: string | null;
   title: string | null;
   total_amount: number | string;
   paid_amount: number | string;
@@ -52,6 +58,8 @@ type PaymentRow = RowDataPacket & {
   id: string;
   patient_id: string;
   treatment_plan_id: string;
+  plan_title?: string | null;
+  plan_total?: number | string | null;
   amount_paid: number | string;
   currency_paid?: PaymentCurrency | null;
   amount_paid_ves?: number | string | null;
@@ -70,6 +78,9 @@ function mapPlan(row: PlanRow, items?: TreatmentPlanItemDto[]): TreatmentPlanDto
     id: row.id,
     patientId: row.patient_id,
     createdBy: row.created_by,
+    createdByName: row.created_by_name ?? null,
+    quoteCode: row.quote_code ?? null,
+    kind: row.kind === 'QUOTE' ? 'QUOTE' : 'VISIT',
     title: row.title,
     totalAmount: Number(row.total_amount),
     paidAmount: Number(row.paid_amount),
@@ -107,6 +118,9 @@ function mapPayment(row: PaymentRow): PaymentDto {
     id: row.id,
     patientId: row.patient_id,
     treatmentPlanId: row.treatment_plan_id,
+    planTitle: row.plan_title ?? null,
+    planTotal:
+      row.plan_total != null ? Number(row.plan_total) : null,
     amountPaid: Number(row.amount_paid),
     currencyPaid: row.currency_paid === 'VES' ? 'VES' : 'USD',
     amountPaidVes:
@@ -130,30 +144,132 @@ function lineTotal(qty: number, unitPrice: number, discountPct: number) {
   return Math.round(qty * unitPrice * (1 - discountPct / 100) * 100) / 100;
 }
 
+const PLAN_STATUSES: PlanStatus[] = [
+  'DRAFT',
+  'APPROVED',
+  'IN_PROGRESS',
+  'CLOSED',
+  'REJECTED',
+  'CANCELLED',
+];
+
+async function nextQuoteCode(
+  conn: { query: typeof dbPool.query },
+  clinicId: string,
+): Promise<string> {
+  const year = new Date().getFullYear();
+  const prefix = `PRES-${year}-`;
+  const [rows] = await conn.query<RowDataPacket[]>(
+    `SELECT quote_code
+     FROM treatment_plans
+     WHERE clinic_id = :clinicId AND quote_code LIKE :prefix
+     ORDER BY quote_code DESC
+     LIMIT 1
+     FOR UPDATE`,
+    { clinicId, prefix: `${prefix}%` },
+  );
+  const last = String(rows[0]?.quote_code ?? '');
+  const n = Number(last.slice(prefix.length));
+  const next = Number.isFinite(n) && n > 0 ? n + 1 : 1;
+  return `${prefix}${String(next).padStart(3, '0')}`;
+}
+
+async function resolvePlanItems(
+  conn: { query: typeof dbPool.query },
+  clinicId: string,
+  items: PlanItemInput[],
+) {
+  const resolved: Array<
+    PlanItemInput & { unitPrice: number; lineTotal: number }
+  > = [];
+
+  for (const item of items) {
+    const [treatments] = await conn.query<RowDataPacket[]>(
+      `SELECT id, base_price FROM treatment_catalog
+       WHERE id = :id AND clinic_id = :clinicId AND is_active = 1
+       LIMIT 1`,
+      { id: item.treatmentId, clinicId },
+    );
+    if (!treatments[0]) {
+      throw httpError(`Tratamiento ${item.treatmentId} no encontrado`, 400);
+    }
+    const qty = item.quantity ?? 1;
+    const unitPrice =
+      item.unitPrice != null
+        ? Number(item.unitPrice)
+        : Number(treatments[0].base_price);
+    const discountPct = item.discountPct ?? 0;
+    resolved.push({
+      ...item,
+      quantity: qty,
+      unitPrice,
+      discountPct,
+      lineTotal: lineTotal(qty, unitPrice, discountPct),
+    });
+  }
+
+  return resolved;
+}
+
 export class BillingService {
   async listPlansByPatient(
     clinicId: string,
     patientId: string,
+    kind?: 'QUOTE' | 'VISIT',
   ): Promise<TreatmentPlanDto[]> {
     await assertPatientInClinic(clinicId, patientId);
     const [rows] = await dbPool.query<PlanRow[]>(
-      `SELECT * FROM treatment_plans
-       WHERE patient_id = :patientId AND clinic_id = :clinicId
-       ORDER BY created_at DESC`,
-      { patientId, clinicId },
+      `SELECT tp.*, u.full_name AS created_by_name
+       FROM treatment_plans tp
+       LEFT JOIN users u ON u.id = tp.created_by
+       WHERE tp.patient_id = :patientId AND tp.clinic_id = :clinicId
+         AND (:kind IS NULL OR tp.kind = :kind)
+       ORDER BY tp.created_at DESC`,
+      { patientId, clinicId, kind: kind ?? null },
     );
-    const plans = await Promise.all(
-      rows.map(async (row) =>
-        mapPlan(row, await this.getItems(clinicId, row.id)),
-      ),
-    );
+    const plans = await this.attachItems(clinicId, rows);
     return plans;
+  }
+
+  private async attachItems(
+    clinicId: string,
+    rows: PlanRow[],
+  ): Promise<TreatmentPlanDto[]> {
+    if (!rows.length) return [];
+    const params: Record<string, string> = { clinicId };
+    const placeholders = rows
+      .map((row, index) => {
+        params[`id${index}`] = row.id;
+        return `:id${index}`;
+      })
+      .join(', ');
+    const [itemRows] = await dbPool.query<ItemRow[]>(
+      `SELECT i.*, tc.name AS treatment_name, tc.code AS treatment_code
+       FROM treatment_plan_items i
+       INNER JOIN treatment_plans tp ON tp.id = i.treatment_plan_id
+       INNER JOIN treatment_catalog tc
+         ON tc.id = i.treatment_id AND tc.clinic_id = tp.clinic_id
+       WHERE tp.clinic_id = :clinicId
+         AND i.treatment_plan_id IN (${placeholders})
+       ORDER BY i.created_at ASC`,
+      params,
+    );
+    const byPlan = new Map<string, TreatmentPlanItemDto[]>();
+    for (const row of itemRows) {
+      const item = mapItem(row);
+      const list = byPlan.get(item.treatmentPlanId) ?? [];
+      list.push(item);
+      byPlan.set(item.treatmentPlanId, list);
+    }
+    return rows.map((row) => mapPlan(row, byPlan.get(row.id) ?? []));
   }
 
   async getPlan(clinicId: string, id: string): Promise<TreatmentPlanDto> {
     const [rows] = await dbPool.query<PlanRow[]>(
-      `SELECT * FROM treatment_plans
-       WHERE id = :id AND clinic_id = :clinicId
+      `SELECT tp.*, u.full_name AS created_by_name
+       FROM treatment_plans tp
+       LEFT JOIN users u ON u.id = tp.created_by
+       WHERE tp.id = :id AND tp.clinic_id = :clinicId
        LIMIT 1`,
       { id, clinicId },
     );
@@ -229,17 +345,20 @@ export class BillingService {
           resolvedItems.reduce((sum, i) => sum + (i.lineTotal ?? 0), 0) * 100,
         ) / 100;
 
+      const quoteCode = await nextQuoteCode(conn, clinicId);
+
       await conn.query(
         `INSERT INTO treatment_plans
-           (id, clinic_id, patient_id, created_by, title, total_amount, paid_amount, status, notes, approved_at)
+           (id, clinic_id, patient_id, created_by, quote_code, kind, title, total_amount, paid_amount, status, notes, approved_at)
          VALUES
-           (:id, :clinicId, :patientId, :createdBy, :title, :totalAmount, 0, :status, :notes, :approvedAt)`,
+           (:id, :clinicId, :patientId, :createdBy, :quoteCode, 'QUOTE', :title, :totalAmount, 0, :status, :notes, :approvedAt)`,
         {
           id: planId,
           clinicId,
           patientId: dto.patientId,
           createdBy: createdBy ?? null,
-          title: dto.title ?? 'Plan de tratamiento',
+          quoteCode,
+          title: dto.title ?? 'Presupuesto',
           totalAmount,
           status,
           notes: dto.notes ?? null,
@@ -272,8 +391,50 @@ export class BillingService {
         );
       }
 
+      let appointmentLabel: string | null = null;
+      if (dto.nextAppointment?.scheduledAt) {
+        const dentistId = dto.nextAppointment.dentistId || createdBy;
+        if (!dentistId) {
+          throw httpError('Elegí un odontólogo para la cita del presupuesto', 400);
+        }
+        await assertDentistInClinic(clinicId, dentistId, conn);
+        const durationMin = dto.nextAppointment.durationMin ?? 30;
+        await appointmentsService.assertSlotAvailable(
+          clinicId,
+          dentistId,
+          dto.nextAppointment.scheduledAt,
+          durationMin,
+        );
+        await conn.query(
+          `INSERT INTO appointments
+             (id, clinic_id, patient_id, dentist_id, scheduled_at, duration_min, status, reason, notes, confirm_token)
+           VALUES
+             (:id, :clinicId, :patientId, :dentistId, :scheduledAt, :durationMin, 'PENDING', :reason, :notes, :confirmToken)`,
+          {
+            id: uuidv4(),
+            clinicId,
+            patientId: dto.patientId,
+            dentistId,
+            scheduledAt: dto.nextAppointment.scheduledAt,
+            durationMin,
+            reason:
+              dto.nextAppointment.reason?.trim() ||
+              `Presupuesto ${quoteCode}`,
+            notes: `Cita asociada al presupuesto ${quoteCode}`,
+            confirmToken: uuidv4(),
+          },
+        );
+        appointmentLabel = dto.nextAppointment.scheduledAt.replace('T', ' ');
+      }
+
       await conn.commit();
-      return this.getPlan(clinicId, planId);
+      const plan = await this.getPlan(clinicId, planId);
+
+      if (dto.notifyPatient !== false) {
+        void this.sendQuoteMail(clinicId, plan, appointmentLabel);
+      }
+
+      return plan;
     } catch (err) {
       await conn.rollback();
       throw err;
@@ -282,15 +443,67 @@ export class BillingService {
     }
   }
 
+  private async sendQuoteMail(
+    clinicId: string,
+    plan: TreatmentPlanDto,
+    appointmentLabel?: string | null,
+  ) {
+    try {
+      const [[patient], [clinic]] = await Promise.all([
+        dbPool
+          .query<RowDataPacket[]>(
+            `SELECT full_name, email FROM patients
+             WHERE id = :id AND clinic_id = :clinicId LIMIT 1`,
+            { id: plan.patientId, clinicId },
+          )
+          .then(([r]) => r),
+        dbPool
+          .query<RowDataPacket[]>(
+            `SELECT name FROM clinics WHERE id = :id LIMIT 1`,
+            { id: clinicId },
+          )
+          .then(([r]) => r),
+      ]);
+      const email = String(patient?.email ?? '').trim();
+      if (!email) return;
+      await sendQuoteEmail({
+        to: email,
+        patientName: String(patient?.full_name ?? 'Paciente'),
+        clinicName: String(clinic?.name ?? 'la clínica'),
+        quoteCode: plan.quoteCode || 'Presupuesto',
+        title: plan.title || 'Presupuesto',
+        procedures: (plan.items ?? []).map((item) => ({
+          name: item.treatmentName || 'Procedimiento',
+          toothNumber: item.toothNumber,
+          quantity: item.quantity,
+          lineTotal: item.lineTotal,
+        })),
+        totalAmount: plan.totalAmount,
+        appointmentLabel,
+      });
+    } catch (err) {
+      console.error('[quote-mail]', err);
+    }
+  }
+
   async updatePlanStatus(
     clinicId: string,
     id: string,
     status: PlanStatus,
   ): Promise<TreatmentPlanDto> {
-    const valid: PlanStatus[] = ['DRAFT', 'APPROVED', 'IN_PROGRESS', 'CLOSED'];
+    const valid: PlanStatus[] = PLAN_STATUSES;
     if (!valid.includes(status)) throw httpError('status inválido', 400);
 
-    await this.getPlan(clinicId, id);
+    const current = await this.getPlan(clinicId, id);
+    if (
+      (status === 'REJECTED' || status === 'CANCELLED') &&
+      current.paidAmount > 0.009
+    ) {
+      throw httpError(
+        'No se puede rechazar o cancelar un presupuesto con pagos',
+        400,
+      );
+    }
     await dbPool.query(
       `UPDATE treatment_plans SET
          status = :status,
@@ -305,15 +518,124 @@ export class BillingService {
     return this.getPlan(clinicId, id);
   }
 
+  async updatePlan(
+    clinicId: string,
+    id: string,
+    dto: UpdatePlanDto,
+  ): Promise<TreatmentPlanDto> {
+    if (!dto.items?.length) {
+      throw httpError('El presupuesto debe incluir al menos un ítem', 400);
+    }
+    const current = await this.getPlan(clinicId, id);
+    if (current.paidAmount > 0.009) {
+      throw httpError('No se puede editar un presupuesto con pagos', 400);
+    }
+
+    const conn = await dbPool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const resolved = await resolvePlanItems(conn, clinicId, dto.items);
+      const totalAmount =
+        Math.round(resolved.reduce((sum, i) => sum + i.lineTotal, 0) * 100) /
+        100;
+
+      await conn.query(
+        `UPDATE treatment_plans
+         SET title = :title, notes = :notes, total_amount = :totalAmount
+         WHERE id = :id AND clinic_id = :clinicId`,
+        {
+          id,
+          clinicId,
+          title: dto.title?.trim() || current.title || 'Presupuesto',
+          notes: dto.notes ?? null,
+          totalAmount,
+        },
+      );
+
+      await conn.query(
+        `DELETE FROM treatment_plan_items WHERE treatment_plan_id = :id`,
+        { id },
+      );
+
+      for (const item of resolved) {
+        await conn.query(
+          `INSERT INTO treatment_plan_items
+             (id, treatment_plan_id, treatment_id, tooth_number, quantity,
+              unit_price, discount_pct, line_total, status)
+           VALUES
+             (:id, :planId, :treatmentId, :toothNumber, :quantity,
+              :unitPrice, :discountPct, :lineTotal, :status)`,
+          {
+            id: uuidv4(),
+            planId: id,
+            treatmentId: item.treatmentId,
+            toothNumber: item.toothNumber ?? null,
+            quantity: item.quantity ?? 1,
+            unitPrice: item.unitPrice,
+            discountPct: item.discountPct ?? 0,
+            lineTotal: item.lineTotal,
+            status: item.status ?? 'PENDING',
+          },
+        );
+      }
+
+      await conn.commit();
+      const plan = await this.getPlan(clinicId, id);
+      if (dto.notifyPatient) {
+        void this.sendQuoteMail(clinicId, plan, null);
+      }
+      return plan;
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+  }
+
+  async duplicatePlan(
+    clinicId: string,
+    id: string,
+    createdBy?: string,
+  ): Promise<TreatmentPlanDto> {
+    const source = await this.getPlan(clinicId, id);
+    const items = source.items ?? (await this.getItems(clinicId, id));
+    if (!items.length) {
+      throw httpError('El presupuesto no tiene ítems para duplicar', 400);
+    }
+    return this.createPlan(
+      clinicId,
+      {
+        patientId: source.patientId,
+        title: source.title
+          ? `Copia de ${source.title}`
+          : 'Presupuesto',
+        notes: source.notes,
+        status: 'DRAFT',
+        items: items.map((item) => ({
+          treatmentId: item.treatmentId,
+          toothNumber: item.toothNumber,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          discountPct: item.discountPct,
+        })),
+      },
+      createdBy,
+    );
+  }
+
   async listPayments(
     clinicId: string,
     patientId: string,
   ): Promise<PaymentDto[]> {
     await assertPatientInClinic(clinicId, patientId);
     const [rows] = await dbPool.query<PaymentRow[]>(
-      `SELECT * FROM payments
-       WHERE patient_id = :patientId AND clinic_id = :clinicId
-       ORDER BY paid_at DESC`,
+      `SELECT p.*, tp.title AS plan_title, tp.total_amount AS plan_total
+       FROM payments p
+       LEFT JOIN treatment_plans tp
+         ON tp.id = p.treatment_plan_id AND tp.clinic_id = p.clinic_id
+       WHERE p.patient_id = :patientId AND p.clinic_id = :clinicId
+       ORDER BY p.paid_at DESC`,
       { patientId, clinicId },
     );
     return rows.map(mapPayment);

@@ -28,7 +28,9 @@ export class ClinicsController {
 
   async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const data = await clinicsService.create(req.body as CreateClinicDto);
+      const data = await clinicsService.create(req.body as CreateClinicDto, {
+        actorEmail: req.user?.email ?? null,
+      });
       res.status(201).json({ data });
     } catch (err) {
       if (!sendError(res, err)) next(err);
@@ -85,10 +87,15 @@ export class ClinicsController {
 
   async createUser(req: Request, res: Response, next: NextFunction) {
     try {
-      const data = await clinicsService.createUser(
-        req.params.id,
-        req.body as CreateClinicUserDto,
-      );
+      const body = req.body as CreateClinicUserDto;
+      const inviteCopyTo =
+        body.copyInviteToSuperAdmin && req.user?.email
+          ? req.user.email.trim().toLowerCase()
+          : body.inviteCopyTo ?? null;
+      const data = await clinicsService.createUser(req.params.id, {
+        ...body,
+        inviteCopyTo,
+      });
       res.status(201).json({ data });
     } catch (err) {
       if (!sendError(res, err)) next(err);
